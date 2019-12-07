@@ -37,6 +37,9 @@
 
 #include <asm/kvm_host.h>
 
+#include <linux/hashtable.h>
+#include <kvm/dsag_mem_simulation.h>
+
 #ifndef KVM_MAX_VCPU_ID
 #define KVM_MAX_VCPU_ID KVM_MAX_VCPUS
 #endif
@@ -455,6 +458,10 @@ struct kvm {
 	struct srcu_struct srcu;
 	struct srcu_struct irq_srcu;
 	pid_t userspace_pid;
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
+    DECLARE_HASHTABLE(dsag_mem_hash, DSAG_MEM_HASH_BITS);
+    uint32_t dasg_mem_node_num;
+#endif
 };
 
 #define kvm_err(fmt, ...) \

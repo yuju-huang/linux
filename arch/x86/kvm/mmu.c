@@ -49,6 +49,8 @@
 #include <asm/kvm_page_track.h>
 #include "trace.h"
 
+#include "dsag_mem_simulation.h"
+
 /*
  * When setting this variable to true it enables Two-Dimensional-Paging
  * where the hardware walks 2 page tables:
@@ -56,7 +58,7 @@
  * 2. while doing 1. it walks guest-physical to host-physical
  * If the hardware supports that we don't need to do shadow paging.
  */
-bool tdp_enabled = false;
+bool tdp_enabled = true;
 
 enum {
 	AUDIT_PRE_PAGE_FAULT,
@@ -4090,6 +4092,8 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	unsigned long mmu_seq;
 	int write = error_code & PFERR_WRITE_MASK;
 	bool map_writable;
+    struct kvm *kvm = vcpu->kvm;
+    const bool is_in_dsag_mem = in_dsag_mem(kvm, gpa);
 
 	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu->root_hpa));
 
@@ -4131,6 +4135,12 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
 	r = __direct_map(vcpu, write, map_writable, level, gfn, pfn, prefault);
 	spin_unlock(&vcpu->kvm->mmu_lock);
+
+    if (!is_in_dsag_mem) {
+        if (record_dsag_mem(kvm, gpa, LOCAL_MEM)) {
+            return RET_PF_RETRY;
+        }
+    }
 
 	return r;
 
