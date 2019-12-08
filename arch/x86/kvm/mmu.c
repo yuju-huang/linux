@@ -153,20 +153,6 @@ module_param(dbg, bool, 0644);
 /* make pte_list_desc fit well in cache line */
 #define PTE_LIST_EXT 3
 
-/*
- * Return values of handle_mmio_page_fault and mmu.page_fault:
- * RET_PF_RETRY: let CPU fault again on the address.
- * RET_PF_EMULATE: mmio page fault, emulate the instruction directly.
- *
- * For handle_mmio_page_fault only:
- * RET_PF_INVALID: the spte is invalid, let the real page fault path update it.
- */
-enum {
-	RET_PF_RETRY = 0,
-	RET_PF_EMULATE = 1,
-	RET_PF_INVALID = 2,
-};
-
 struct pte_list_desc {
 	u64 *sptes[PTE_LIST_EXT];
 	struct pte_list_desc *more;
@@ -3151,6 +3137,9 @@ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
 					       map_writable);
 			direct_pte_prefetch(vcpu, iterator.sptep);
 			++vcpu->stat.pf_fixed;
+
+            if (unlikely(dsag_mem_simulation(vcpu->kvm, gfn, iterator.sptep)))
+                return RET_PF_RETRY;
 			break;
 		}
 
@@ -4092,8 +4081,8 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	unsigned long mmu_seq;
 	int write = error_code & PFERR_WRITE_MASK;
 	bool map_writable;
-    struct kvm *kvm = vcpu->kvm;
-    const bool is_in_dsag_mem = in_dsag_mem(kvm, gpa);
+
+    // TODO: Handle the early return in dsag simulation scenario.
 
 	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu->root_hpa));
 
@@ -4135,12 +4124,6 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
 	r = __direct_map(vcpu, write, map_writable, level, gfn, pfn, prefault);
 	spin_unlock(&vcpu->kvm->mmu_lock);
-
-    if (!is_in_dsag_mem) {
-        if (record_dsag_mem(kvm, gpa, LOCAL_MEM)) {
-            return RET_PF_RETRY;
-        }
-    }
 
 	return r;
 
