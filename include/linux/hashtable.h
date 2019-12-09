@@ -129,6 +129,19 @@ static inline void hash_del_rcu(struct hlist_node *node)
 		hlist_for_each_entry(obj, &name[bkt], member)
 
 /**
+ * hash_for_each_from - iterate over a hashtable starting from a key
+ * @name: hashtable to iterate
+ * @bkt: integer to use as bucket loop cursor
+ * @from: bucket start
+ * @obj: the type * to use as a loop cursor for each entry
+ * @member: the name of the hlist_node within the struct
+ */
+#define hash_for_each_from(name, bkt, from,obj, member)				\
+	for ((bkt) = (from), obj = NULL; obj == NULL && (bkt) < HASH_SIZE(name);\
+			(bkt)++)\
+		hlist_for_each_entry(obj, &name[bkt], member)
+
+/**
  * hash_for_each_rcu - iterate over a rcu enabled hashtable
  * @name: hashtable to iterate
  * @bkt: integer to use as bucket loop cursor
