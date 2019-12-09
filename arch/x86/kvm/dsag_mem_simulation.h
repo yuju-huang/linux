@@ -33,8 +33,8 @@ int dsag_mem_simulation(struct kvm *kvm, gfn_t gfn, u64 *sptep);
  * Node operations
  */
 struct dsag_mem_node* find_dsag_node(struct kvm *kvm, u64 *sptep);
-int record_dsag_mem(struct kvm *kvm, u64 *sptep, enum dsag_mem_type mem_type);
-void update_dsag_mem(struct kvm *kvm, gfn_t gfn, enum dsag_mem_type mem_type);
+int record_dsag_node(struct kvm *kvm, u64 *sptep, enum dsag_mem_type mem_type);
+void delete_dsag_node(struct kvm *kvm, u64 *sptep);
 
 /*
  * Page operations

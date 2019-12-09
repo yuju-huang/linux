@@ -21,16 +21,19 @@ void dsag_sim_init(struct kvm *kvm)
 
 int dsag_mem_simulation(struct kvm *kvm, gfn_t gfn, u64 *sptep)
 {
-    struct dsag_mem_node *node = find_dsag_node(kvm, sptep);
+    struct dsag_mem_node *node;
     if (!sptep) {
         printk(KERN_ERR "[DSAG] Error: sptep null in %s\n", __func__);
         return RET_PF_RETRY;
     }
 
+    printk(KERN_DEBUG "[DSAG] %s: gfn=0x%llx, sptep=0x%llx\n", __func__, gfn, sptep);
+
+    node = find_dsag_node(kvm, sptep);
     if (!node) {
         printk(KERN_DEBUG "[DSAG] node not exist\n");
 
-        if (record_dsag_mem(kvm, gfn, LOCAL_MEM)) {
+        if (record_dsag_node(kvm, sptep, LOCAL_MEM)) {
             return RET_PF_RETRY;
         }
 
@@ -66,7 +69,7 @@ struct dsag_mem_node* find_dsag_node(struct kvm *kvm, u64 *sptep)
     return NULL;
 }
 
-int record_dsag_mem(struct kvm *kvm, u64 *sptep, enum dsag_mem_type mem_type) {
+int record_dsag_node(struct kvm *kvm, u64 *sptep, enum dsag_mem_type mem_type) {
     struct dsag_mem_node *node = kmalloc(sizeof(struct dsag_mem_node),
                                          GFP_KERNEL);
     if (!node) return -1;
@@ -78,6 +81,25 @@ int record_dsag_mem(struct kvm *kvm, u64 *sptep, enum dsag_mem_type mem_type) {
     ++kvm->dsag_mem_node_num;
     printk(KERN_DEBUG "[DSAG] %s:sptep=0x%llx, dsag_mem_node_num=%d\n", __func__, sptep, kvm->dsag_mem_node_num);
     return 0;
+}
+
+void delete_dsag_node(struct kvm *kvm, u64 *sptep) {
+    struct dsag_mem_node *node;
+    if (!sptep) {
+        printk(KERN_ERR "[DSAG] Error: sptep null in %s\n", __func__);
+        return;
+    }
+
+    node = find_dsag_node(kvm, sptep);
+    if (!node) {
+        printk(KERN_ERR "[DSAG] Error: delete a non-existent node in %s\n", __func__);
+        return;
+    }
+
+    hash_del(&node->hnode);
+    --kvm->dsag_mem_node_num;;
+    printk(KERN_DEBUG "[DSAG] %s:sptep=0x%llx, dsag_mem_node_num=%d\n", __func__, sptep, kvm->dsag_mem_node_num);
+    return;
 }
 
 /*
@@ -145,6 +167,5 @@ void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
     // TODO: Add network delay.
     return;
 }
-
 
 #endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
