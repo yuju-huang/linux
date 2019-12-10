@@ -9,6 +9,19 @@
 #include <linux/types.h>
 #include <linux/kvm_types.h>
 
+#define DEBUG 1
+// #define HAL 0
+#if (DEBUG || HALT)
+#define dsag_printk(type, x...) do { \
+    printk("[DSAG] " x); \
+    if ((type) == KERN_ERR) BUG_ON(true); \
+} while (0)
+#elif DEBUG
+#define dsag_printk(type, x...) do { \
+    printk("[DSAG] " x); \
+} while (0)
+#endif
+
 enum dsag_mem_type {
     LOCAL_MEM,
     REMOTE_MEM,
