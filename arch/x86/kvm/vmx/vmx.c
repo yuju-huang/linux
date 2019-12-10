@@ -64,6 +64,8 @@
 #include "vmx.h"
 #include "x86.h"
 
+#include "dsag_mem_simulation.h"
+
 MODULE_AUTHOR("Qumranet");
 MODULE_LICENSE("GPL");
 
@@ -5105,12 +5107,15 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 static int handle_ept_misconfig(struct kvm_vcpu *vcpu)
 {
 	gpa_t gpa;
+    gfn_t gfn;
 
 	/*
 	 * A nested guest cannot optimize MMIO vmexits, because we have an
 	 * nGPA here instead of the required GPA.
 	 */
 	gpa = vmcs_read64(GUEST_PHYSICAL_ADDRESS);
+    gfn = gpa >> PAGE_SHIFT;
+    dsag_printk(KERN_DEBUG, "%s: gpa=0x%llx, gfn=0x%llx\n", __func__, gpa, gfn);
 	if (!is_guest_mode(vcpu) &&
 	    !kvm_io_bus_write(vcpu, KVM_FAST_MMIO_BUS, gpa, 0, NULL)) {
 		trace_kvm_fast_mmio(gpa);

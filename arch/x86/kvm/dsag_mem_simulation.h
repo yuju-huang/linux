@@ -29,6 +29,9 @@ enum dsag_mem_type {
 
 struct dsag_mem_node {
     u64 *sptep;
+    kvm_pfn_t pfn;
+    gfn_t gfn;
+    int level;
     enum dsag_mem_type mem_type;
     struct hlist_node hnode;
 };
@@ -40,13 +43,13 @@ void dsag_sim_init(struct kvm *kvm);
 
 // Simulate the disaggregated memory architecture.
 // Return 0 indicates success; otherwise a failure.
-int dsag_mem_simulation(struct kvm *kvm, gfn_t gfn, u64 *sptep);
+int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, int level);
 
 /*
  * Node operations
  */
 struct dsag_mem_node* find_dsag_node(struct kvm *kvm, u64 *sptep);
-int record_dsag_node(struct kvm *kvm, u64 *sptep, enum dsag_mem_type mem_type);
+int record_dsag_node(struct kvm *kvm, kvm_pfn_t pfn, u64 *sptep, gfn_t gfn, int level, enum dsag_mem_type mem_type);
 void delete_dsag_node(struct kvm *kvm, u64 *sptep);
 
 /*
