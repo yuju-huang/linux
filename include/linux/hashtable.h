@@ -137,7 +137,7 @@ static inline void hash_del_rcu(struct hlist_node *node)
  * @member: the name of the hlist_node within the struct
  */
 #define hash_for_each_from(name, bkt, from,obj, member)				\
-	for ((bkt) = (from), obj = NULL; obj == NULL && (bkt) < HASH_SIZE(name);\
+	for ((bkt) = hash_min(from, HASH_BITS(name)), obj = NULL; obj == NULL && (bkt) < HASH_SIZE(name);\
 			(bkt)++)\
 		hlist_for_each_entry(obj, &name[bkt], member)
 
