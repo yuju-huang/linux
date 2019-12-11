@@ -22,7 +22,7 @@ void dsag_sim_init(struct kvm *kvm, int local_mem_size)
     kvm->dsag_local_mem_node_num = 0;
     unsigned long size_in_byte = local_mem_size * MB;
     kvm->dsag_local_mem_node_max = size_in_byte / PAGE_SIZE;
-    printk(KERN_DEBUG "[DSAG] %s, local_mem_size=%d, dsag_local_mem_node_max=%d\n", __func__, local_mem_size, kvm->dsag_local_mem_node_max);
+    dsag_printk(KERN_DEBUG, "%s, local_mem_size=%d, dsag_local_mem_node_max=%d\n", __func__, local_mem_size, kvm->dsag_local_mem_node_max);
     return;
 }
 
@@ -30,15 +30,15 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
 {
     struct dsag_mem_node *node;
     if (!sptep) {
-        printk(KERN_ERR "[DSAG] Error: sptep null in %s\n", __func__);
+        dsag_printk(KERN_ERR, "Error: sptep null in %s\n", __func__);
         return RET_PF_RETRY;
     }
 
-    printk(KERN_DEBUG "[DSAG] %s: gfn=0x%llx, sptep=0x%lx\n", __func__, gfn, (uintptr_t)sptep);
+    dsag_printk(KERN_DEBUG, "%s: gfn=0x%llx, sptep=0x%lx\n", __func__, gfn, (uintptr_t)sptep);
 
     node = find_dsag_node(kvm, sptep);
     if (!node) {
-        printk(KERN_DEBUG "[DSAG] node not exist\n");
+        dsag_printk(KERN_DEBUG, "node not exist\n");
 
         if (record_dsag_node(kvm, pfn, sptep, gfn, level, LOCAL_MEM)) {
             return RET_PF_RETRY;
@@ -52,18 +52,18 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
             dsag_swap_out_local_page(kvm);
         }
     } else {
-        printk(KERN_DEBUG "[DSAG] node exist, sptep=0x%lx, mem_type=%d\n", (uintptr_t)node->sptep, node->mem_type);
+        dsag_printk(KERN_DEBUG, "node exist, sptep=0x%lx, mem_type=%d\n", (uintptr_t)node->sptep, node->mem_type);
 
         // Page in remote region?
         //  - Yes: swap in.
         //  - No : Possibility - page is swapped to disk? [WARNING]
         if (node->mem_type == LOCAL_MEM) {
-            printk(KERN_WARNING "[DSAG] Error: fault should not happen for a local page access\n");
+            dsag_printk(KERN_WARNING "Error: fault should not happen for a local page access\n");
             // TODO: handle a local page is swapped to disk.
 /*
-            printk(KERN_DEBUG "[DSAG] ori pte=0x%llx\n", *node->sptep);
+            dsag_printk(KERN_DEBUG, "ori pte=0x%llx\n", *node->sptep);
             *node->sptep |= VMX_EPT_RWX_MASK;
-            printk(KERN_DEBUG "[DSAG] after pte=0x%llx\n", *node->sptep);
+            dsag_printk(KERN_DEBUG, "after pte=0x%llx\n", *node->sptep);
 */
         } else {
             dsag_swap_in_remote_page(kvm, node);
@@ -72,7 +72,7 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
 
     if ((kvm->dsag_local_mem_node_num <= 0) &&
         (kvm->dsag_local_mem_node_num > kvm->dsag_local_mem_node_max)) {
-        printk(KERN_ERR "[DSAG] Error dsag_local_mem_node_num=%d in %s\n", kvm->dsag_local_mem_node_num, __func__);
+        dsag_printk(KERN_ERR, "Error dsag_local_mem_node_num=%d in %s\n", kvm->dsag_local_mem_node_num, __func__);
     }
     return 0;
 }
@@ -84,7 +84,7 @@ struct dsag_mem_node* find_dsag_node(struct kvm *kvm, u64 *sptep)
 {
     struct dsag_mem_node *node;
     hash_for_each_possible(kvm->dsag_mem_hash, node, hnode, (uintptr_t)sptep) {
-        printk(KERN_DEBUG "[DSAG] %s: sptep=0x%lx, node->sptep=0x%lx\n", __func__, (uintptr_t)sptep, (uintptr_t)node->sptep);
+        dsag_printk(KERN_DEBUG, "%s: sptep=0x%lx, node->sptep=0x%lx\n", __func__, (uintptr_t)sptep, (uintptr_t)node->sptep);
         if (node->sptep == sptep)
             return node;
     }
@@ -103,27 +103,27 @@ int record_dsag_node(struct kvm *kvm, kvm_pfn_t pfn, u64 *sptep, gfn_t gfn, int 
     node->mem_type = mem_type;
 
     hash_add(kvm->dsag_mem_hash, &node->hnode, (uintptr_t)sptep);
-    printk(KERN_DEBUG "[DSAG] %s: sptep=0x%lx, hash=%d, dsag_local_mem_node_num=%d\n", __func__, (uintptr_t)sptep, hash_min((uintptr_t)sptep, HASH_BITS(kvm->dsag_mem_hash)), kvm->dsag_local_mem_node_num);
+    dsag_printk(KERN_DEBUG, "%s: sptep=0x%lx, hash=%d, dsag_local_mem_node_num=%d\n", __func__, (uintptr_t)sptep, hash_min((uintptr_t)sptep, HASH_BITS(kvm->dsag_mem_hash)), kvm->dsag_local_mem_node_num);
     return 0;
 }
 
 void delete_dsag_node(struct kvm *kvm, u64 *sptep) {
     struct dsag_mem_node *node;
     if (!sptep) {
-        printk(KERN_ERR "[DSAG] Error: sptep null in %s\n", __func__);
+        dsag_printk(KERN_ERR, "Error: sptep null in %s\n", __func__);
         return;
     }
 
     node = find_dsag_node(kvm, sptep);
     if (!node) {
-        printk(KERN_ERR "[DSAG] Error in %s: delete a non-existent node 0x%lx\n", __func__, (uintptr_t)sptep);
+        dsag_printk(KERN_ERR, "Error in %s: delete a non-existent node 0x%lx\n", __func__, (uintptr_t)sptep);
         return;
     }
 
     hash_del(&node->hnode);
     if (node->mem_type == LOCAL_MEM)
         --kvm->dsag_local_mem_node_num;
-    printk(KERN_DEBUG "[DSAG] %s:delete sptep=0x%lx, dsag_local_mem_node_num=%d\n", __func__, (uintptr_t)sptep, kvm->dsag_local_mem_node_num);
+    dsag_printk(KERN_DEBUG, "%s:delete sptep=0x%lx, dsag_local_mem_node_num=%d\n", __func__, (uintptr_t)sptep, kvm->dsag_local_mem_node_num);
     return;
 }
 
@@ -149,9 +149,9 @@ void dsag_swap_out_local_page(struct kvm *kvm)
     // TODO: Introduce a proper mechanism. Current design simply finds a random
     //       node to be a victim.
     get_random_bytes(&victim_key, sizeof(victim_key));
-    printk(KERN_DEBUG "[DSAG] %s: victim_key=0x%llx\n", __func__, victim_key);
+    dsag_printk(KERN_DEBUG, "%s: victim_key=0x%llx\n", __func__, victim_key);
     hash_for_each_from(kvm->dsag_mem_hash, bkt, victim_key, node, hnode) {
-        printk(KERN_DEBUG "[DSAG] bkt=%d, HASH_SIZE(name)=%ld, node->sptep=0x%lx\n", bkt, HASH_SIZE(kvm->dsag_mem_hash), (uintptr_t)node->sptep);
+        dsag_printk(KERN_DEBUG, "bkt=%d, HASH_SIZE(name)=%ld, node->sptep=0x%lx\n", bkt, HASH_SIZE(kvm->dsag_mem_hash), (uintptr_t)node->sptep);
         if (valid_to_swap_out(node)) {
             victim_node = node;
             break;
@@ -169,20 +169,20 @@ void dsag_swap_out_local_page(struct kvm *kvm)
     }
 
     if (!victim_node || !victim_node->sptep) {
-        printk(KERN_ERR "[DSAG] Error: no pte found to be swapped out\n");
+        dsag_printk(KERN_ERR, "Error: no pte found to be swapped out\n");
         return;
     }
 
     // Update vimcit's PTE to not-present and memory type.
-    printk(KERN_DEBUG "[DSAG] swap out, ori pte=0x%llx\n", *node->sptep);
+    dsag_printk(KERN_DEBUG, "swap out, ori pte=0x%llx\n", *node->sptep);
     *victim_node->sptep &= ~VMX_EPT_RWX_MASK;
     // TODO: should flush tlb.
     // kvm_flush_remote_tlbs_with_address(kvm, victim_node->gfn, KVM_PAGES_PER_HPAGE(victim_node->level)); 
 
     victim_node->mem_type = REMOTE_MEM;
     --kvm->dsag_local_mem_node_num;
-    printk(KERN_DEBUG "[DSAG] swap out, after pte=0x%llx\n", *node->sptep);
-    printk(KERN_DEBUG "[DSAG] %s: swap 0x%lx to remote region\n", __func__, (uintptr_t)node->sptep);
+    dsag_printk(KERN_DEBUG, "swap out, after pte=0x%llx\n", *node->sptep);
+    dsag_printk(KERN_DEBUG, "%s: swap 0x%lx to remote region\n", __func__, (uintptr_t)node->sptep);
 
     udelay(NETWORK_DELAY);
     return;
@@ -191,26 +191,26 @@ void dsag_swap_out_local_page(struct kvm *kvm)
 void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
 {
     if (!node || node->mem_type == LOCAL_MEM) {
-        printk(KERN_ERR "[DSAG] Error: the node to be swapped in should be in remote region\n");
+        dsag_printk(KERN_ERR, "Error: the node to be swapped in should be in remote region\n");
         return;
     }
 
     if (kvm->dsag_local_mem_node_num < kvm->dsag_local_mem_node_max) {
-        printk(KERN_ERR "[DSAG] Error: swap in process should be called only if local region is full but dsag_local_mem_node_num=%d\n", kvm->dsag_local_mem_node_num);
+        dsag_printk(KERN_ERR, "Error: swap in process should be called only if local region is full but dsag_local_mem_node_num=%d\n", kvm->dsag_local_mem_node_num);
     } else {
         // Swap out a local page first.
         dsag_swap_out_local_page(kvm);
     }
 
     ++kvm->dsag_local_mem_node_num;
-    printk(KERN_DEBUG "[DSAG] %s 0x%lx in local region\n", __func__, (uintptr_t)node->sptep);
+    dsag_printk(KERN_DEBUG, "%s: 0x%lx in local region\n", __func__, (uintptr_t)node->sptep);
 
     // TODO: should cache original access permission.
     // TODO: this should be already updated by original handler? (by __direct_map?)
 /*
-    printk(KERN_DEBUG "[DSAG] swap in, ori pte=0x%llx\n", *node->sptep);
+    dsag_printk(KERN_DEBUG, "swap in, ori pte=0x%llx\n", *node->sptep);
     *node->sptep |= VMX_EPT_RWX_MASK;
-    printk(KERN_DEBUG "[DSAG] swap in, after pte=0x%llx\n", *node->sptep);
+    dsag_printk(KERN_DEBUG, "swap in, after pte=0x%llx\n", *node->sptep);
 */
     udelay(NETWORK_DELAY);
     return;

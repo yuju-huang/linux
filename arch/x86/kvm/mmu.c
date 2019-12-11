@@ -532,13 +532,13 @@ static void __set_spte(u64 *sptep, u64 spte)
 
 static void __update_clear_spte_fast(u64 *sptep, u64 spte)
 {
-    printk(KERN_DEBUG "[DSAG] %s: sptep=0x%lx, spte=0x%llx\n", __func__, (uintptr_t)sptep, spte);
+    dsag_printk(KERN_DEBUG, "%s: sptep=0x%lx, spte=0x%llx\n", __func__, (uintptr_t)sptep, spte);
 	WRITE_ONCE(*sptep, spte);
 }
 
 static u64 __update_clear_spte_slow(u64 *sptep, u64 spte)
 {
-    printk(KERN_DEBUG "[DSAG] %s: sptep=0x%lx, spte=0x%llx\n", __func__, (uintptr_t)sptep, spte);
+    dsag_printk(KERN_DEBUG, "%s: sptep=0x%lx, spte=0x%llx\n", __func__, (uintptr_t)sptep, spte);
 	return xchg(sptep, spte);
 }
 
@@ -810,14 +810,14 @@ static int mmu_spte_clear_track_bits(struct kvm *kvm, u64 *sptep)
 		old_spte = __update_clear_spte_slow(sptep, 0ull);
     delete_dsag_node(kvm, sptep);
 
-    dsag_printk(KERN_DEBUG, "%s-1\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-1\n", __func__);
 	if (!is_shadow_present_pte(old_spte))
 		return 0;
 
-    dsag_printk(KERN_DEBUG, "%s-2\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-2\n", __func__);
 	pfn = spte_to_pfn(old_spte);
 
-    dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-3\n", __func__);
 	/*
 	 * KVM does not hold the refcount of the page used by
 	 * kvm mmu, before reclaiming the page, we should
@@ -825,17 +825,17 @@ static int mmu_spte_clear_track_bits(struct kvm *kvm, u64 *sptep)
 	 */
 	WARN_ON(!kvm_is_reserved_pfn(pfn) && !page_count(pfn_to_page(pfn)));
 
-    dsag_printk(KERN_DEBUG, "%s-4\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-4\n", __func__);
 	if (is_accessed_spte(old_spte))
 		kvm_set_pfn_accessed(pfn);
 
-    dsag_printk(KERN_DEBUG, "%s-5\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-5\n", __func__);
 	if (is_dirty_spte(old_spte)) {
-        dsag_printk(KERN_DEBUG, "%s-6\n", __func__);
+        dsag_printk(KERN_DEBUG,, "%s-6\n", __func__);
 		kvm_set_pfn_dirty(pfn);
     }
 
-    dsag_printk(KERN_DEBUG, "%s-7\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-7\n", __func__);
 	return 1;
 }
 
@@ -1351,9 +1351,9 @@ static struct kvm_rmap_head *__gfn_to_rmap(gfn_t gfn, int level,
 {
 	unsigned long idx;
 
-    dsag_printk(KERN_DEBUG, "%s-1, gfn=0x%lx, level=%d, slot=0x%llx\n", __func__, gfn, level, slot);
+    dsag_printk(KERN_DEBUG,, "%s-1, gfn=0x%lx, level=%d, slot=0x%llx\n", __func__, gfn, level, slot);
 	idx = gfn_to_index(gfn, slot->base_gfn, level);
-    dsag_printk(KERN_DEBUG, "%s-2\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-2\n", __func__);
 	return &slot->arch.rmap[level - PT_PAGE_TABLE_LEVEL][idx];
 }
 
@@ -1363,11 +1363,11 @@ static struct kvm_rmap_head *gfn_to_rmap(struct kvm *kvm, gfn_t gfn,
 	struct kvm_memslots *slots;
 	struct kvm_memory_slot *slot;
 
-    dsag_printk(KERN_DEBUG, "%s-1\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-1\n", __func__);
 	slots = kvm_memslots_for_spte_role(kvm, sp->role);
-    dsag_printk(KERN_DEBUG, "%s-2\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-2\n", __func__);
 	slot = __gfn_to_memslot(slots, gfn);
-    dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-3\n", __func__);
 	return __gfn_to_rmap(gfn, sp->role.level, slot);
 }
 
@@ -1398,11 +1398,11 @@ static void rmap_remove(struct kvm *kvm, u64 *spte)
 
 	sp = page_header(__pa(spte));
 	gfn = kvm_mmu_page_get_gfn(sp, spte - sp->spt);
-    dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-3\n", __func__);
 	rmap_head = gfn_to_rmap(kvm, gfn, sp);
-    dsag_printk(KERN_DEBUG, "%s-4\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-4\n", __func__);
 	__pte_list_remove(spte, rmap_head);
-    dsag_printk(KERN_DEBUG, "%s-5\n", __func__);
+    dsag_printk(KERN_DEBUG,, "%s-5\n", __func__);
 }
 
 /*
@@ -1484,7 +1484,7 @@ out:
 static void drop_spte(struct kvm *kvm, u64 *sptep)
 {
 	if (mmu_spte_clear_track_bits(kvm, sptep)) {
-        dsag_printk(KERN_DEBUG, "%s, sptep=0x%lx, spte=0x%llx\n", __func__, (uintptr_t)sptep, *sptep);
+        dsag_printk(KERN_DEBUG,, "%s, sptep=0x%lx, spte=0x%llx\n", __func__, (uintptr_t)sptep, *sptep);
 		rmap_remove(kvm, sptep);
     }
 }
@@ -1907,7 +1907,7 @@ static int kvm_handle_hva_range(struct kvm *kvm,
 			gfn_start = hva_to_gfn_memslot(hva_start, memslot);
 			gfn_end = hva_to_gfn_memslot(hva_end + PAGE_SIZE - 1, memslot);
 
-            printk(KERN_DEBUG "[DSAG] %s: gfn_start=0x%llx, gfn_end=0x%llx\n", __func__, gfn_start, gfn_end);
+            dsag_printk(KERN_DEBUG, "%s: gfn_start=0x%llx, gfn_end=0x%llx\n", __func__, gfn_start, gfn_end);
 
 			for_each_slot_rmap_range(memslot, PT_PAGE_TABLE_LEVEL,
 						 PT_MAX_HUGEPAGE_LEVEL,
@@ -1934,7 +1934,7 @@ static int kvm_handle_hva(struct kvm *kvm, unsigned long hva,
 
 int kvm_unmap_hva_range(struct kvm *kvm, unsigned long start, unsigned long end)
 {
-    printk(KERN_DEBUG "[DSAG] %s, start=0x%lx, end=0x%lx\n", __func__, start, end);
+    dsag_printk(KERN_DEBUG, "%s, start=0x%lx, end=0x%lx\n", __func__, start, end);
 	return kvm_handle_hva_range(kvm, start, end, 0, kvm_unmap_rmapp);
 }
 
@@ -3023,7 +3023,7 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep, unsigned pte_access,
 
 	pgprintk("%s: spte %llx write_fault %d gfn %llx\n", __func__,
 		 *sptep, write_fault, gfn);
-	printk(KERN_DEBUG"[DSAG] %s: sptep 0x%lx spte 0x%llx write_fault %d gfn 0x%llx\n", __func__, (uintptr_t)sptep,
+	dsag_printk(KERN_DEBUG,"%s: sptep 0x%lx spte 0x%llx write_fault %d gfn 0x%llx\n", __func__, (uintptr_t)sptep,
 		 *sptep, write_fault, gfn);
 
 	if (is_shadow_present_pte(*sptep)) {
@@ -3033,7 +3033,7 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep, unsigned pte_access,
 		 */
 		if (level > PT_PAGE_TABLE_LEVEL &&
 		    !is_large_pte(*sptep)) {
-            printk(KERN_DEBUG "[DSAG] %s-1\n", __func__);
+            dsag_printk(KERN_DEBUG, "%s-1\n", __func__);
 			struct kvm_mmu_page *child;
 			u64 pte = *sptep;
 
@@ -3041,39 +3041,39 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep, unsigned pte_access,
 			drop_parent_pte(vcpu->kvm, child, sptep);
 			flush = true;
 		} else if (pfn != spte_to_pfn(*sptep)) {
-            printk(KERN_DEBUG "[DSAG] %s-2, pfn=0x%llx, sptep=0x%lx, *sptep=0x%llx, spte_to_pfn=0x%lx\n", __func__, pfn, (uintptr_t)sptep, *sptep, spte_to_pfn);
+            dsag_printk(KERN_DEBUG, "%s-2, pfn=0x%llx, sptep=0x%lx, *sptep=0x%llx, spte_to_pfn=0x%lx\n", __func__, pfn, (uintptr_t)sptep, *sptep, spte_to_pfn);
 			pgprintk("hfn old %llx new %llx\n",
 				 spte_to_pfn(*sptep), pfn);
 			drop_spte(vcpu->kvm, sptep);
 			flush = true;
 		} else {
-            printk(KERN_DEBUG "[DSAG] %s-3\n", __func__);
+            dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
 			was_rmapped = 1;
         }
 	}
 
-    printk(KERN_DEBUG "[DSAG] %s-4\n", __func__);
+    dsag_printk(KERN_DEBUG, "%s-4\n", __func__);
 	set_spte_ret = set_spte(vcpu, sptep, pte_access, level, gfn, pfn,
 				speculative, true, host_writable);
-    printk(KERN_DEBUG "[DSAG] %s-5\n", __func__);
+    dsag_printk(KERN_DEBUG, "%s-5\n", __func__);
 	if (set_spte_ret & SET_SPTE_WRITE_PROTECTED_PT) {
 		if (write_fault)
 			ret = RET_PF_EMULATE;
-        printk(KERN_DEBUG "[DSAG] %s-6\n", __func__);
+        dsag_printk(KERN_DEBUG, "%s-6\n", __func__);
 		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
 	}
 
-    printk(KERN_DEBUG "[DSAG] %s-7\n", __func__);
+    dsag_printk(KERN_DEBUG, "%s-7\n", __func__);
 	if (set_spte_ret & SET_SPTE_NEED_REMOTE_TLB_FLUSH || flush)
 		kvm_flush_remote_tlbs_with_address(vcpu->kvm, gfn,
 				KVM_PAGES_PER_HPAGE(level));
 
-    printk(KERN_DEBUG "[DSAG] %s-8\n", __func__);
+    dsag_printk(KERN_DEBUG, "%s-8\n", __func__);
 	if (unlikely(is_mmio_spte(*sptep)))
 		ret = RET_PF_EMULATE;
 
 	pgprintk("%s: setting spte %llx\n", __func__, *sptep);
-	printk(KERN_DEBUG"[DSAG] %s: setting spte 0x%llx\n", __func__, *sptep);
+	dsag_printk(KERN_DEBUG,"%s: setting spte 0x%llx\n", __func__, *sptep);
 
 	pgprintk("instantiating %s PTE (%s) at %llx (%llx) addr %p\n",
 		 is_large_pte(*sptep)? "2MB" : "4kB",
@@ -3189,7 +3189,7 @@ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
 
 	for_each_shadow_entry(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
 #if 0
-        printk(KERN_DEBUG "[DSAG] %s; sptep=0x%lx, spte=0x%llx, iter.level=%d, level=%d\n", __func__, (uintptr_t)iterator.sptep, *iterator.sptep, iterator.level, level);
+        dsag_printk(KERN_DEBUG, "%s; sptep=0x%lx, spte=0x%llx, iter.level=%d, level=%d\n", __func__, (uintptr_t)iterator.sptep, *iterator.sptep, iterator.level, level);
         struct dsag_mem_node *node;
         if (node = find_dsag_node(vcpu->kvm, iterator.sptep)) {
             if (node->mem_type == REMOTE_MEM) {
@@ -4152,18 +4152,18 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	int write = error_code & PFERR_WRITE_MASK;
 	bool map_writable;
 
-    printk(KERN_DEBUG "[DSAG] tdp_page_fault1, vpuc=0x%lx, gpa=0x%lx, gfn=0x%llx, error_code=0x%x\n", (uintptr_t)vcpu, gpa, gfn, error_code);
+    dsag_printk(KERN_DEBUG, "tdp_page_fault1, vpuc=0x%lx, gpa=0x%lx, gfn=0x%llx, error_code=0x%x\n", (uintptr_t)vcpu, gpa, gfn, error_code);
 
 	MMU_WARN_ON(!VALID_PAGE(vcpu->arch.mmu->root_hpa));
 
 	if (page_fault_handle_page_track(vcpu, error_code, gfn)) {
-        printk(KERN_DEBUG "[DSAG] tdp_page_fault return 1\n");
+        dsag_printk(KERN_DEBUG, "tdp_page_fault return 1\n");
         return RET_PF_EMULATE;
     }
 
 	r = mmu_topup_memory_caches(vcpu);
 	if (r) {
-        printk(KERN_DEBUG "[DSAG] tdp_page_fault return 2, r=%d\n", r);
+        dsag_printk(KERN_DEBUG, "tdp_page_fault return 2, r=%d\n", r);
 		return r;
     }
 
@@ -4179,7 +4179,7 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 
 #if 0
 	if (fast_page_fault(vcpu, gpa, level, error_code)) {
-        printk(KERN_DEBUG "[DSAG] tdp_page_fault return 3\n");
+        dsag_printk(KERN_DEBUG, "tdp_page_fault return 3\n");
 		return RET_PF_RETRY;
     }
 #endif
@@ -4188,34 +4188,34 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
 	smp_rmb();
 
 	if (try_async_pf(vcpu, prefault, gfn, gpa, &pfn, write, &map_writable)) {
-        printk(KERN_DEBUG "[DSAG] tdp_page_fault return 4\n");
+        dsag_printk(KERN_DEBUG, "tdp_page_fault return 4\n");
 		return RET_PF_RETRY;
     }
 
 	if (handle_abnormal_pfn(vcpu, 0, gfn, pfn, ACC_ALL, &r)) {
-        printk(KERN_DEBUG "[DSAG] tdp_page_fault return 5, r=%d\n", r);
+        dsag_printk(KERN_DEBUG, "tdp_page_fault return 5, r=%d\n", r);
 		return r;
     }
 
 	spin_lock(&vcpu->kvm->mmu_lock);
 	if (mmu_notifier_retry(vcpu->kvm, mmu_seq)) {
-        printk(KERN_DEBUG "[DSAG] tdp_page_fault return 6\n");
+        dsag_printk(KERN_DEBUG, "tdp_page_fault return 6\n");
 		goto out_unlock;
     }
 	if (make_mmu_pages_available(vcpu) < 0) {
-        printk(KERN_DEBUG "[DSAG] tdp_page_fault return 7\n");
+        dsag_printk(KERN_DEBUG, "tdp_page_fault return 7\n");
 		goto out_unlock;
     }
 	if (likely(!force_pt_level))
 		transparent_hugepage_adjust(vcpu, &gfn, &pfn, &level);
 
     // TODO: Handle the early return in dsag simulation scenario.
-    printk(KERN_DEBUG "[DSAG] tdp_page_fault2, gpa=0x%lx, gfn=0x%llx, pfn=0x%llx, error_code=0x%x\n", gpa, gfn, pfn, error_code);
+    dsag_printk(KERN_DEBUG, "tdp_page_fault2, gpa=0x%lx, gfn=0x%llx, pfn=0x%llx, error_code=0x%x\n", gpa, gfn, pfn, error_code);
 
 	r = __direct_map(vcpu, write, map_writable, level, gfn, pfn, prefault);
 	spin_unlock(&vcpu->kvm->mmu_lock);
 
-    printk(KERN_DEBUG "[DSAG] tdp_page_fault return 8, r=%d\n", r);
+    dsag_printk(KERN_DEBUG, "tdp_page_fault return 8, r=%d\n", r);
 	return r;
 
 out_unlock:
