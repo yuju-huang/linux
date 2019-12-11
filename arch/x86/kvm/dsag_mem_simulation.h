@@ -36,11 +36,6 @@ struct dsag_mem_node {
     struct hlist_node hnode;
 };
 
-/*
- * External APIs
- */
-void dsag_sim_init(struct kvm *kvm);
-
 // Simulate the disaggregated memory architecture.
 // Return 0 indicates success; otherwise a failure.
 int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, int level);

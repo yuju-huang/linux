@@ -65,6 +65,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/kvm.h>
 
+#include <kvm/dsag_mem_simulation.h>
+
 /* Worst case buffer size needed for holding an integer. */
 #define ITOA_MAX_LEN 12
 
@@ -3090,6 +3092,14 @@ static long kvm_vm_ioctl(struct file *filp,
 	if (kvm->mm != current->mm)
 		return -EIO;
 	switch (ioctl) {
+    case KVM_ENABLE_DSAG_MEM_SIM: {
+        struct kvm_dsag_mem_sim sim;
+		if (copy_from_user(&sim, argp, sizeof(sim)))
+			goto out;
+        dsag_sim_init(kvm, sim.local_mem_size);
+        r = 0;
+        break;
+    }
 	case KVM_CREATE_VCPU:
 		r = kvm_vm_ioctl_create_vcpu(kvm, arg);
 		break;

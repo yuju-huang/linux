@@ -9131,8 +9131,6 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	kvm_page_track_init(kvm);
 	kvm_mmu_init_vm(kvm);
 
-    dsag_sim_init(kvm);
-
 	if (kvm_x86_ops->vm_init)
 		return kvm_x86_ops->vm_init(kvm);
 

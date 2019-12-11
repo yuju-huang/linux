@@ -10,14 +10,19 @@
 #include "dsag_mem_simulation.h"
 #include "mmu.h"
 
+#define MB (1ULL << 20)
+#define NETWORK_DELAY 10
+
 /*
  * External APIs
  */
-void dsag_sim_init(struct kvm *kvm)
+void dsag_sim_init(struct kvm *kvm, int local_mem_size)
 {
-    printk(KERN_DEBUG "[DSAG] %s\n", __func__);
     hash_init(kvm->dsag_mem_hash);
     kvm->dsag_local_mem_node_num = 0;
+    unsigned long size_in_byte = local_mem_size * MB;
+    kvm->dsag_local_mem_node_max = size_in_byte / PAGE_SIZE;
+    printk(KERN_DEBUG "[DSAG] %s, local_mem_size=%d, dsag_local_mem_node_max=%d\n", __func__, local_mem_size, kvm->dsag_local_mem_node_max);
     return;
 }
 
@@ -43,7 +48,7 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
 
         // Swap out a local page if local region is full, else increase number
         // of local nodes.
-        if (kvm->dsag_local_mem_node_num > DSAG_LOCAL_MEMORY_PAGE_NUM) {
+        if (kvm->dsag_local_mem_node_num > kvm->dsag_local_mem_node_max) {
             dsag_swap_out_local_page(kvm);
         }
     } else {
@@ -66,7 +71,7 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
     }
 
     if ((kvm->dsag_local_mem_node_num <= 0) &&
-        (kvm->dsag_local_mem_node_num > DSAG_LOCAL_MEMORY_PAGE_NUM)) {
+        (kvm->dsag_local_mem_node_num > kvm->dsag_local_mem_node_max)) {
         printk(KERN_ERR "[DSAG] Error dsag_local_mem_node_num=%d in %s\n", kvm->dsag_local_mem_node_num, __func__);
     }
     return 0;
@@ -190,7 +195,7 @@ void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
         return;
     }
 
-    if (kvm->dsag_local_mem_node_num < DSAG_LOCAL_MEMORY_PAGE_NUM) {
+    if (kvm->dsag_local_mem_node_num < kvm->dsag_local_mem_node_max) {
         printk(KERN_ERR "[DSAG] Error: swap in process should be called only if local region is full but dsag_local_mem_node_num=%d\n", kvm->dsag_local_mem_node_num);
     } else {
         // Swap out a local page first.

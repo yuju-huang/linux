@@ -1440,6 +1440,11 @@ struct kvm_enc_region {
 /* Available with KVM_CAP_HYPERV_CPUID */
 #define KVM_GET_SUPPORTED_HV_CPUID _IOWR(KVMIO, 0xc1, struct kvm_cpuid2)
 
+struct kvm_dsag_mem_sim {
+    __u32 local_mem_size;    // in MB
+};
+#define KVM_ENABLE_DSAG_MEM_SIM    _IOW(KVMIO, 0xc2, struct kvm_dsag_mem_sim)
+
 /* Secure Encrypted Virtualization command */
 enum sev_cmd_id {
 	/* Guest initialization commands */
