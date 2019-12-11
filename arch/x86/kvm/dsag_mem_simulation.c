@@ -1,6 +1,7 @@
 #ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 
 #include <asm/vmx.h>
+#include <linux/delay.h>
 #include <linux/hashtable.h>
 #include <linux/kvm_host.h>
 #include <linux/random.h>
@@ -178,7 +179,7 @@ void dsag_swap_out_local_page(struct kvm *kvm)
     printk(KERN_DEBUG "[DSAG] swap out, after pte=0x%llx\n", *node->sptep);
     printk(KERN_DEBUG "[DSAG] %s: swap 0x%lx to remote region\n", __func__, (uintptr_t)node->sptep);
 
-    // TODO: Add network delay.
+    udelay(NETWORK_DELAY);
     return;
 }
 
@@ -206,7 +207,7 @@ void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
     *node->sptep |= VMX_EPT_RWX_MASK;
     printk(KERN_DEBUG "[DSAG] swap in, after pte=0x%llx\n", *node->sptep);
 */
-    // TODO: Add network delay.
+    udelay(NETWORK_DELAY);
     return;
 }
 
