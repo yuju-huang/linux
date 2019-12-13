@@ -11,15 +11,18 @@
 
 #define DEBUG 1
 // #define HAL 0
-#if (DEBUG || HALT)
+#if (DEBUG && HALT)
 #define dsag_printk(type, x...) do { \
     printk("[DSAG] " x); \
     if ((type) == KERN_ERR) BUG_ON(true); \
 } while (0)
 #elif DEBUG
 #define dsag_printk(type, x...) do { \
+    printk("%s-", #type); \
     printk("[DSAG] " x); \
 } while (0)
+#else
+#define dsag_printk(type, x...)
 #endif
 
 enum dsag_mem_type {

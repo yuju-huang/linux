@@ -75,6 +75,7 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
         (kvm->dsag_local_mem_node_num > kvm->dsag_local_mem_node_max)) {
         dsag_printk(KERN_ERR, "Error dsag_local_mem_node_num=%d in %s\n", kvm->dsag_local_mem_node_num, __func__);
     }
+    dsag_printk(KERN_DEBUG, "%s end: dsag_local_mem_node_num=%d\n", __func__, kvm->dsag_local_mem_node_num);
     return 0;
 }
 
@@ -122,8 +123,9 @@ void delete_dsag_node(struct kvm *kvm, u64 *sptep) {
     }
 
     hash_del(&node->hnode);
-    if (node->mem_type == LOCAL_MEM)
+    if (node->mem_type == LOCAL_MEM) {
         --kvm->dsag_local_mem_node_num;
+    }
     dsag_printk(KERN_DEBUG, "%s:delete sptep=0x%lx, dsag_local_mem_node_num=%d\n", __func__, (uintptr_t)sptep, kvm->dsag_local_mem_node_num);
     return;
 }
