@@ -11,16 +11,17 @@
 #include "mmu.h"
 
 #define MB (1ULL << 20)
-#define NETWORK_DELAY 10
 
 /*
  * External APIs
  */
-void dsag_sim_init(struct kvm *kvm, int local_mem_size)
+void dsag_sim_init(struct kvm *kvm, int local_mem_size, int network_delay)
 {
+    const unsigned long size_in_byte = local_mem_size * MB;
+
     hash_init(kvm->dsag_mem_hash);
+    kvm->dsag_network_delay = network_delay;
     kvm->dsag_local_mem_node_num = 0;
-    unsigned long size_in_byte = local_mem_size * MB;
     kvm->dsag_local_mem_node_max = size_in_byte / PAGE_SIZE;
     dsag_printk(KERN_DEBUG, "%s, local_mem_size=%d, dsag_local_mem_node_max=%d\n", __func__, local_mem_size, kvm->dsag_local_mem_node_max);
     return;
@@ -182,9 +183,9 @@ void dsag_swap_out_local_page(struct kvm *kvm)
     victim_node->mem_type = REMOTE_MEM;
     --kvm->dsag_local_mem_node_num;
     dsag_printk(KERN_DEBUG, "swap out, after pte=0x%llx\n", *node->sptep);
-    dsag_printk(KERN_DEBUG, "%s: swap 0x%lx to remote region\n", __func__, (uintptr_t)node->sptep);
+    // dsag_printk(KERN_DEBUG, "%s: swap 0x%lx to remote region\n", __func__, (uintptr_t)node->sptep);
 
-    udelay(NETWORK_DELAY);
+    udelay(kvm->dsag_network_delay);
     return;
 }
 
@@ -212,7 +213,7 @@ void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
     *node->sptep |= VMX_EPT_RWX_MASK;
     dsag_printk(KERN_DEBUG, "swap in, after pte=0x%llx\n", *node->sptep);
 */
-    udelay(NETWORK_DELAY);
+    udelay(kvm->dsag_network_delay);
     return;
 }
 

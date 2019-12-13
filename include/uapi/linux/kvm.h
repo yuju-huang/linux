@@ -1442,6 +1442,7 @@ struct kvm_enc_region {
 
 struct kvm_dsag_mem_sim {
     __u32 local_mem_size;    // in MB
+    __u32 network_delay_in_us;
 };
 #define KVM_ENABLE_DSAG_MEM_SIM    _IOW(KVMIO, 0xc2, struct kvm_dsag_mem_sim)
 

@@ -3096,7 +3096,7 @@ static long kvm_vm_ioctl(struct file *filp,
         struct kvm_dsag_mem_sim sim;
 		if (copy_from_user(&sim, argp, sizeof(sim)))
 			goto out;
-        dsag_sim_init(kvm, sim.local_mem_size);
+        dsag_sim_init(kvm, sim.local_mem_size, sim.network_delay_in_us);
         r = 0;
         break;
     }
