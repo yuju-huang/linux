@@ -48,13 +48,13 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
  */
 struct dsag_mem_node* find_dsag_node(struct kvm *kvm, u64 *sptep);
 int record_dsag_node(struct kvm *kvm, kvm_pfn_t pfn, u64 *sptep, gfn_t gfn, int level, enum dsag_mem_type mem_type);
-void delete_dsag_node(struct kvm *kvm, u64 *sptep);
+int delete_dsag_node(struct kvm *kvm, u64 *sptep);
 
 /*
  * Page operations
  */
-void dsag_swap_out_local_page(struct kvm *kvm);
-void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node);
+int dsag_swap_out_local_page(struct kvm *kvm);
+int dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node);
 
 #endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 #endif  // __KVM_X86_DSAG_MEM_SIMULATE_H

@@ -12,6 +12,9 @@
 
 #define MB (1ULL << 20)
 
+#define RET_SUCC 0
+#define RET_FAIL -1
+
 /*
  * External APIs
  */
@@ -41,16 +44,17 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
     if (!node) {
         dsag_printk(KERN_DEBUG, "node not exist\n");
 
-        if (record_dsag_node(kvm, pfn, sptep, gfn, level, LOCAL_MEM)) {
-            return RET_PF_RETRY;
-        }
-
-        ++kvm->dsag_local_mem_node_num;
-
         // Swap out a local page if local region is full, else increase number
         // of local nodes.
         if (kvm->dsag_local_mem_node_num > kvm->dsag_local_mem_node_max) {
-            dsag_swap_out_local_page(kvm);
+            if (dsag_swap_out_local_page(kvm) != RET_SUCC) {
+                return RET_PF_RETRY;
+            }
+        }
+
+        if (record_dsag_node(kvm, pfn, sptep, gfn, level, LOCAL_MEM)!= RET_SUCC) {
+            ++kvm->dsag_local_mem_node_num;
+            return RET_PF_RETRY;
         }
     } else {
         dsag_printk(KERN_DEBUG, "node exist, sptep=0x%lx, mem_type=%d\n", (uintptr_t)node->sptep, node->mem_type);
@@ -96,7 +100,7 @@ struct dsag_mem_node* find_dsag_node(struct kvm *kvm, u64 *sptep)
 int record_dsag_node(struct kvm *kvm, kvm_pfn_t pfn, u64 *sptep, gfn_t gfn, int level, enum dsag_mem_type mem_type) {
     struct dsag_mem_node *node = kmalloc(sizeof(struct dsag_mem_node),
                                          GFP_KERNEL);
-    if (!node) return -1;
+    if (!node) return RET_FAIL;
 
     node->sptep = sptep;
     node->pfn = pfn;
@@ -109,25 +113,26 @@ int record_dsag_node(struct kvm *kvm, kvm_pfn_t pfn, u64 *sptep, gfn_t gfn, int 
     return 0;
 }
 
-void delete_dsag_node(struct kvm *kvm, u64 *sptep) {
+int delete_dsag_node(struct kvm *kvm, u64 *sptep) {
     struct dsag_mem_node *node;
     if (!sptep) {
         dsag_printk(KERN_ERR, "Error: sptep null in %s\n", __func__);
-        return;
+        return RET_FAIL;
     }
 
     node = find_dsag_node(kvm, sptep);
     if (!node) {
         dsag_printk(KERN_ERR, "Error in %s: delete a non-existent node 0x%lx\n", __func__, (uintptr_t)sptep);
-        return;
+        return RET_FAIL;
     }
 
     hash_del(&node->hnode);
     if (node->mem_type == LOCAL_MEM) {
         --kvm->dsag_local_mem_node_num;
     }
+    kfree(node);
     dsag_printk(KERN_DEBUG, "%s:delete sptep=0x%lx, dsag_local_mem_node_num=%d\n", __func__, (uintptr_t)sptep, kvm->dsag_local_mem_node_num);
-    return;
+    return RET_SUCC;
 }
 
 /*
@@ -142,7 +147,7 @@ static inline bool valid_to_swap_out(struct dsag_mem_node *node)
 }
 
 
-void dsag_swap_out_local_page(struct kvm *kvm)
+int dsag_swap_out_local_page(struct kvm *kvm)
 {
     int bkt;
     u64 victim_key;
@@ -173,7 +178,7 @@ void dsag_swap_out_local_page(struct kvm *kvm)
 
     if (!victim_node || !victim_node->sptep) {
         dsag_printk(KERN_ERR, "Error: no pte found to be swapped out\n");
-        return;
+        return RET_FAIL;
     }
 
     // Update vimcit's PTE to not-present and memory type.
@@ -188,14 +193,14 @@ void dsag_swap_out_local_page(struct kvm *kvm)
     // dsag_printk(KERN_DEBUG, "%s: swap 0x%lx to remote region\n", __func__, (uintptr_t)node->sptep);
 
     udelay(kvm->dsag_network_delay);
-    return;
+    return RET_SUCC;
 }
 
-void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
+int dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
 {
     if (!node || node->mem_type == LOCAL_MEM) {
         dsag_printk(KERN_ERR, "Error: the node to be swapped in should be in remote region\n");
-        return;
+        return RET_FAIL;
     }
 
     if (kvm->dsag_local_mem_node_num < kvm->dsag_local_mem_node_max) {
@@ -216,7 +221,7 @@ void dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node)
     dsag_printk(KERN_DEBUG, "swap in, after pte=0x%llx\n", *node->sptep);
 */
     udelay(kvm->dsag_network_delay);
-    return;
+    return RET_SUCC;
 }
 
 #endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
