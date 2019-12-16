@@ -53,9 +53,9 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
         }
 
         if (record_dsag_node(kvm, pfn, sptep, gfn, level, LOCAL_MEM)!= RET_SUCC) {
-            ++kvm->dsag_local_mem_node_num;
             return RET_PF_RETRY;
         }
+        ++kvm->dsag_local_mem_node_num;
     } else {
         dsag_printk(KERN_DEBUG, "node exist, sptep=0x%lx, mem_type=%d\n", (uintptr_t)node->sptep, node->mem_type);
 

@@ -810,14 +810,11 @@ static int mmu_spte_clear_track_bits(struct kvm *kvm, u64 *sptep)
 		old_spte = __update_clear_spte_slow(sptep, 0ull);
     delete_dsag_node(kvm, sptep);
 
-    dsag_printk(KERN_DEBUG, "%s-1\n", __func__);
 	if (!is_shadow_present_pte(old_spte))
 		return 0;
 
-    dsag_printk(KERN_DEBUG, "%s-2\n", __func__);
 	pfn = spte_to_pfn(old_spte);
 
-    dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
 	/*
 	 * KVM does not hold the refcount of the page used by
 	 * kvm mmu, before reclaiming the page, we should
@@ -825,17 +822,12 @@ static int mmu_spte_clear_track_bits(struct kvm *kvm, u64 *sptep)
 	 */
 	WARN_ON(!kvm_is_reserved_pfn(pfn) && !page_count(pfn_to_page(pfn)));
 
-    dsag_printk(KERN_DEBUG, "%s-4\n", __func__);
 	if (is_accessed_spte(old_spte))
 		kvm_set_pfn_accessed(pfn);
 
-    dsag_printk(KERN_DEBUG, "%s-5\n", __func__);
-	if (is_dirty_spte(old_spte)) {
-        dsag_printk(KERN_DEBUG, "%s-6\n", __func__);
+	if (is_dirty_spte(old_spte))
 		kvm_set_pfn_dirty(pfn);
-    }
 
-    dsag_printk(KERN_DEBUG, "%s-7\n", __func__);
 	return 1;
 }
 
@@ -1351,9 +1343,7 @@ static struct kvm_rmap_head *__gfn_to_rmap(gfn_t gfn, int level,
 {
 	unsigned long idx;
 
-    dsag_printk(KERN_DEBUG, "%s-1, gfn=0x%lx, level=%d, slot=0x%llx\n", __func__, gfn, level, slot);
 	idx = gfn_to_index(gfn, slot->base_gfn, level);
-    dsag_printk(KERN_DEBUG, "%s-2\n", __func__);
 	return &slot->arch.rmap[level - PT_PAGE_TABLE_LEVEL][idx];
 }
 
@@ -1363,11 +1353,8 @@ static struct kvm_rmap_head *gfn_to_rmap(struct kvm *kvm, gfn_t gfn,
 	struct kvm_memslots *slots;
 	struct kvm_memory_slot *slot;
 
-    dsag_printk(KERN_DEBUG, "%s-1\n", __func__);
 	slots = kvm_memslots_for_spte_role(kvm, sp->role);
-    dsag_printk(KERN_DEBUG, "%s-2\n", __func__);
 	slot = __gfn_to_memslot(slots, gfn);
-    dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
 	return __gfn_to_rmap(gfn, sp->role.level, slot);
 }
 
@@ -1398,11 +1385,8 @@ static void rmap_remove(struct kvm *kvm, u64 *spte)
 
 	sp = page_header(__pa(spte));
 	gfn = kvm_mmu_page_get_gfn(sp, spte - sp->spt);
-    dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
 	rmap_head = gfn_to_rmap(kvm, gfn, sp);
-    dsag_printk(KERN_DEBUG, "%s-4\n", __func__);
 	__pte_list_remove(spte, rmap_head);
-    dsag_printk(KERN_DEBUG, "%s-5\n", __func__);
 }
 
 /*
@@ -1483,10 +1467,8 @@ out:
 
 static void drop_spte(struct kvm *kvm, u64 *sptep)
 {
-	if (mmu_spte_clear_track_bits(kvm, sptep)) {
-        dsag_printk(KERN_DEBUG, "%s, sptep=0x%lx, spte=0x%llx\n", __func__, (uintptr_t)sptep, *sptep);
+	if (mmu_spte_clear_track_bits(kvm, sptep))
 		rmap_remove(kvm, sptep);
-    }
 }
 
 
@@ -3041,34 +3023,27 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep, unsigned pte_access,
 			drop_parent_pte(vcpu->kvm, child, sptep);
 			flush = true;
 		} else if (pfn != spte_to_pfn(*sptep)) {
-            dsag_printk(KERN_DEBUG, "%s-2, pfn=0x%llx, sptep=0x%lx, *sptep=0x%llx, spte_to_pfn=0x%lx\n", __func__, pfn, (uintptr_t)sptep, *sptep, spte_to_pfn);
 			pgprintk("hfn old %llx new %llx\n",
 				 spte_to_pfn(*sptep), pfn);
 			drop_spte(vcpu->kvm, sptep);
 			flush = true;
 		} else {
-            dsag_printk(KERN_DEBUG, "%s-3\n", __func__);
 			was_rmapped = 1;
         }
 	}
 
-    dsag_printk(KERN_DEBUG, "%s-4\n", __func__);
 	set_spte_ret = set_spte(vcpu, sptep, pte_access, level, gfn, pfn,
 				speculative, true, host_writable);
-    dsag_printk(KERN_DEBUG, "%s-5\n", __func__);
 	if (set_spte_ret & SET_SPTE_WRITE_PROTECTED_PT) {
 		if (write_fault)
 			ret = RET_PF_EMULATE;
-        dsag_printk(KERN_DEBUG, "%s-6\n", __func__);
 		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
 	}
 
-    dsag_printk(KERN_DEBUG, "%s-7\n", __func__);
 	if (set_spte_ret & SET_SPTE_NEED_REMOTE_TLB_FLUSH || flush)
 		kvm_flush_remote_tlbs_with_address(vcpu->kvm, gfn,
 				KVM_PAGES_PER_HPAGE(level));
 
-    dsag_printk(KERN_DEBUG, "%s-8\n", __func__);
 	if (unlikely(is_mmio_spte(*sptep)))
 		ret = RET_PF_EMULATE;
 
@@ -3188,16 +3163,6 @@ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
 		return 0;
 
 	for_each_shadow_entry(vcpu, (u64)gfn << PAGE_SHIFT, iterator) {
-#if 0
-        dsag_printk(KERN_DEBUG, "%s; sptep=0x%lx, spte=0x%llx, iter.level=%d, level=%d\n", __func__, (uintptr_t)iterator.sptep, *iterator.sptep, iterator.level, level);
-        struct dsag_mem_node *node;
-        if (node = find_dsag_node(vcpu->kvm, iterator.sptep)) {
-            if (node->mem_type == REMOTE_MEM) {
-                dsag_swap_in_remote_page(vcpu->kvm, node);
-                return RET_PF_RETRY;
-            }
-        }
-#endif
 		if (iterator.level == level) {
 			emulate = mmu_set_spte(vcpu, iterator.sptep, ACC_ALL,
 					       write, level, gfn, pfn, prefault,
