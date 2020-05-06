@@ -10,7 +10,7 @@
 #include <linux/kvm_types.h>
 
 #define DEBUG 1
-// #define HAL 0
+// #define HALT 0
 #if (DEBUG && HALT)
 #define dsag_printk(type, x...) do { \
     pr_debug("[DSAG] " x); \

@@ -459,10 +459,7 @@ struct kvm {
 	struct srcu_struct irq_srcu;
 	pid_t userspace_pid;
 #ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
-    DECLARE_HASHTABLE(dsag_mem_hash, DSAG_MEM_HASH_BITS);
-    uint32_t dsag_network_delay;
-    uint32_t dsag_local_mem_node_num;
-    uint32_t dsag_local_mem_node_max;
+    struct dsag_local_mem_t dsag_local_mem;
 #endif
 };
 
