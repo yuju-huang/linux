@@ -36,17 +36,21 @@ void dsag_sim_init(struct kvm *kvm, int local_mem_size, int network_delay)
     return;
 }
 
-static void check_free_page(struct dsag_local_mem_t* dsag_mem) {
+static void check_free_page(struct kvm* kvm) {
     uint32_t num_free_pages;
     unsigned long flags;
+    struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
 
-    spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
-    num_free_pages = dsag_mem->num_free_pages;
-    spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
-    if (num_free_pages == 0) {
-        dsag_printk(KERN_DEBUG, "%s, do blocking swap out\n", __func__);
-        // TODO: Swap out pages, call swapper's helper function.
-        //       Should swap out LOW_MEM_THRESHOLD pages. (blocking operation)
+    while (1) {
+        spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
+        num_free_pages = dsag_mem->num_free_pages;
+        spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
+        if (num_free_pages == 0) {
+            dsag_printk(KERN_DEBUG, "%s, do blocking swap out\n", __func__);
+            dsag_swap_out_local_page(kvm, LOW_MEM_THRESHOLD);
+        } else {
+            break;
+        }
     }
     return;
 }
@@ -64,7 +68,7 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
 
     dsag_printk(KERN_DEBUG, "%s: gfn=0x%llx, sptep=0x%lx\n", __func__, gfn, (uintptr_t)sptep);
 
-    check_free_page(dsag_mem);
+    check_free_page(kvm);
 
     node = find_dsag_node(kvm, sptep);
     if (!node) {
@@ -77,6 +81,7 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
 
         spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
         --dsag_mem->num_free_pages;
+        BUG_ON(dsag_mem->num_free_pages < 0);
         spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
     } else {
         dsag_printk(KERN_DEBUG, "node exist, sptep=0x%lx, mem_type=%d\n", (uintptr_t)node->sptep, node->mem_type);
@@ -126,8 +131,10 @@ int record_dsag_node(struct kvm *kvm, kvm_pfn_t pfn, u64 *sptep, gfn_t gfn, int 
 }
 
 int delete_dsag_node(struct kvm *kvm, u64 *sptep) {
-#if 0
+    unsigned long flags;
     struct dsag_mem_node *node;
+    struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
+
     if (!sptep) {
         dsag_printk(KERN_ERR, "Error: sptep null in %s\n", __func__);
         return RET_FAIL;
@@ -141,11 +148,12 @@ int delete_dsag_node(struct kvm *kvm, u64 *sptep) {
 
     hash_del(&node->hnode);
     if (node->mem_type == LOCAL_MEM) {
-        --kvm->dsag_local_mem_node_num;
+        spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
+        ++dsag_mem->num_free_pages;
+        spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
     }
     kfree(node);
-    dsag_printk(KERN_DEBUG, "%s:delete sptep=0x%lx, dsag_local_mem_node_num=%d\n", __func__, (uintptr_t)sptep, kvm->dsag_local_mem_node_num);
-#endif
+    dsag_printk(KERN_DEBUG, "%s:delete sptep=0x%lx, num_free_pages=%d\n", __func__, (uintptr_t)sptep, dsag_mem->num_free_pages);
     return RET_SUCC;
 }
 
@@ -160,21 +168,20 @@ static inline bool valid_to_swap_out(struct dsag_mem_node *node)
             (node->level == 1));
 }
 
-
-int dsag_swap_out_local_page(struct kvm *kvm)
+// Return a node to be swapped out from the dsag_mem's mem_list.
+struct dsag_mem_node* find_victim(const struct dsag_local_mem_t* dsag_mem)
 {
-#if 0
     int bkt;
     u64 victim_key;
     struct dsag_mem_node *node, *victim_node = NULL;
 
-    // Find a victim.
     // TODO: Introduce a proper mechanism. Current design simply finds a random
-    //       node to be a victim.
+    //       node as a victim.
+
     get_random_bytes(&victim_key, sizeof(victim_key));
     dsag_printk(KERN_DEBUG, "%s: victim_key=0x%llx\n", __func__, victim_key);
-    hash_for_each_from(kvm->local_mem_list, bkt, victim_key, node, hnode) {
-        dsag_printk(KERN_DEBUG, "bkt=%d, HASH_SIZE(name)=%ld, node->sptep=0x%lx\n", bkt, HASH_SIZE(kvm->local_mem_list), (uintptr_t)node->sptep);
+    hash_for_each_from(dsag_mem->local_mem_list, bkt, victim_key, node, hnode) {
+        dsag_printk(KERN_DEBUG, "bkt=%d, HASH_SIZE(name)=%ld, node->sptep=0x%lx\n", bkt, HASH_SIZE(dsag_mem->local_mem_list), (uintptr_t)node->sptep);
         if (valid_to_swap_out(node)) {
             victim_node = node;
             break;
@@ -183,33 +190,49 @@ int dsag_swap_out_local_page(struct kvm *kvm)
 
     if (!victim_node) {
         // Circle back.
-        hash_for_each(kvm->local_mem_list, bkt, node, hnode) {
+        hash_for_each(dsag_mem->local_mem_list, bkt, node, hnode) {
         if (valid_to_swap_out(node)) {
                 victim_node = node;
                 break;
             }
         }
     }
+    return victim_node;
+}
 
-    if (!victim_node || !victim_node->sptep) {
+// Return the number of pages that are swapped out.
+int dsag_swap_out_local_page(struct kvm *kvm, size_t num_swap_out)
+{
+    size_t i;
+    unsigned long flags;
+    struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
+    struct dsag_mem_node *victim, **victims;
+    victims = kmalloc(num_swap_out * sizeof(struct dsag_mem_node*), GFP_KERNEL);
+
+    // Find victims.
+    for (i = 0; i < num_swap_out; ++i) {
+        victim = find_victim(dsag_mem);
+        if (victim && victim->sptep) {
+            victim->mem_type = REMOTE_MEM;
+            victims[i] = victim;
+        } else {
+            break;
+        }
+    }
+
+    if (i == 0) {
         dsag_printk(KERN_ERR, "Error: no pte found to be swapped out\n");
         return RET_FAIL;
     }
 
-    // Update vimcit's PTE to not-present and memory type.
-    dsag_printk(KERN_DEBUG, "swap out, ori pte=0x%llx\n", *node->sptep);
-    *victim_node->sptep &= ~VMX_EPT_RWX_MASK;
-    // TODO: should flush tlb.
-    // kvm_flush_remote_tlbs_with_address(kvm, victim_node->gfn, KVM_PAGES_PER_HPAGE(victim_node->level)); 
+    // TODO: Call swap function.
+    
+    // Update num_free_pages.
+    spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
+    dsag_mem->num_free_pages += i;
+    spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
 
-    victim_node->mem_type = REMOTE_MEM;
-    --kvm->dsag_local_mem_node_num;
-    dsag_printk(KERN_DEBUG, "swap out, after pte=0x%llx\n", *node->sptep);
-    // dsag_printk(KERN_DEBUG, "%s: swap 0x%lx to remote region\n", __func__, (uintptr_t)node->sptep);
-
-    udelay(kvm->dsag_network_delay);
-#endif
-    return RET_SUCC;
+    return i;
 }
 
 #endif  // CONFIG_KVM_DSAG_MEM_SIMULATION

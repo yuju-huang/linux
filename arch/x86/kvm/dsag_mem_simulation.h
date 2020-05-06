@@ -53,7 +53,7 @@ int delete_dsag_node(struct kvm *kvm, u64 *sptep);
 /*
  * Page operations
  */
-int dsag_swap_out_local_page(struct kvm *kvm);
+int dsag_swap_out_local_page(struct kvm *kvm, size_t num_swap_out);
 int dsag_swap_in_remote_page(struct kvm *kvm, struct dsag_mem_node *node);
 
 #endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
