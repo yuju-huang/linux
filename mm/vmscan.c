@@ -1530,6 +1530,7 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 	mod_node_page_state(zone->zone_pgdat, NR_ISOLATED_FILE, -ret);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(reclaim_clean_pages_from_list);
 
 /*
  * Attempt to remove the specified page from its LRU.  Only take this page

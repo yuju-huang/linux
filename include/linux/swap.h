@@ -378,6 +378,9 @@ extern void check_move_unevictable_pages(struct pagevec *pvec);
 extern int kswapd_run(int nid);
 extern void kswapd_stop(int nid);
 
+extern unsigned long reclaim_clean_pages_from_list(struct zone *zone,
+                                                   struct list_head *page_list);
+
 #ifdef CONFIG_SWAP
 
 #include <linux/blk_types.h> /* for bio_end_io_t */

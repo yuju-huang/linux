@@ -6,6 +6,7 @@
 #include <linux/kvm_host.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <linux/swap.h>
 
 #include "dsag_mem_simulation.h"
 #include "mmu.h"
@@ -90,11 +91,17 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
         //  - Yes: it should be swapped in the EPT page fault handler.
         //  - No : ignore.
         if (node->mem_type == REMOTE_MEM) {
+            dsag_printk(KERN_DEBUG, "%s: node sptep=0x%lx is swaped in\n", __func__, (uintptr_t)node->sptep);
             node->mem_type = LOCAL_MEM;
+
+            spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
+            --dsag_mem->num_free_pages;
+            BUG_ON(dsag_mem->num_free_pages < 0);
+            spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
         }
     }
 
-    dsag_printk(KERN_DEBUG, "%s end: dsag_local_mem_node_num=%d\n", __func__, dsag_mem->num_free_pages);
+    dsag_printk(KERN_DEBUG, "%s end: num_free_pages=%d\n", __func__, dsag_mem->num_free_pages);
     return 0;
 }
 
@@ -177,7 +184,6 @@ struct dsag_mem_node* find_victim(const struct dsag_local_mem_t* dsag_mem)
 
     // TODO: Introduce a proper mechanism. Current design simply finds a random
     //       node as a victim.
-
     get_random_bytes(&victim_key, sizeof(victim_key));
     dsag_printk(KERN_DEBUG, "%s: victim_key=0x%llx\n", __func__, victim_key);
     hash_for_each_from(dsag_mem->local_mem_list, bkt, victim_key, node, hnode) {
@@ -203,10 +209,14 @@ struct dsag_mem_node* find_victim(const struct dsag_local_mem_t* dsag_mem)
 // Return the number of pages that are swapped out.
 int dsag_swap_out_local_page(struct kvm *kvm, size_t num_swap_out)
 {
-    size_t i;
+    LIST_HEAD(page_list);
+    size_t i, j;
     unsigned long flags;
-    struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
+    unsigned long nr_reclaimed;
+    struct page* page;
+    struct zone* zone;
     struct dsag_mem_node *victim, **victims;
+    struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
     victims = kmalloc(num_swap_out * sizeof(struct dsag_mem_node*), GFP_KERNEL);
 
     // Find victims.
@@ -225,13 +235,26 @@ int dsag_swap_out_local_page(struct kvm *kvm, size_t num_swap_out)
         return RET_FAIL;
     }
 
-    // TODO: Call swap function.
+    // Prepare page list.
+    for (j = 0; j < i; ++j) {
+        page = pfn_to_page(victims[i]->pfn);
+        BUG_ON(!page);
+        list_move(&page->lru, &page_list);
+
+        dsag_printk(KERN_DEBUG, "%s: add node sptep=0x%lx to swap-out list\n", __func__, (uintptr_t)(victims[i]->sptep));
+    }
+
+    // TODO: Need to make sure all the pages are in same zone.
+    zone = page_zone(page);
+    nr_reclaimed = reclaim_clean_pages_from_list(zone, &page_list);
     
     // Update num_free_pages.
     spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
     dsag_mem->num_free_pages += i;
     spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
+    kfree(victims);
 
+    // TODO: check nr_reclaimed
     return i;
 }
 

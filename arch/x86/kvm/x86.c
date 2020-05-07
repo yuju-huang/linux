@@ -29,7 +29,6 @@
 #include "cpuid.h"
 #include "pmu.h"
 #include "hyperv.h"
-#include "dsag_mem_simulation.h"
 
 #include <linux/clocksource.h>
 #include <linux/interrupt.h>
