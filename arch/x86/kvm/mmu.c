@@ -799,6 +799,7 @@ static bool mmu_spte_update(u64 *sptep, u64 new_spte)
  * state bits, it is used to clear the last level sptep.
  * Returns non-zero if the PTE was previously valid.
  */
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 static int mmu_spte_clear_track_bits(struct kvm *kvm, u64 *sptep)
 {
 	kvm_pfn_t pfn;
@@ -830,17 +831,56 @@ static int mmu_spte_clear_track_bits(struct kvm *kvm, u64 *sptep)
 
 	return 1;
 }
+#else
+static int mmu_spte_clear_track_bits(u64 *sptep)
+{
+	kvm_pfn_t pfn;
+	u64 old_spte = *sptep;
+
+	if (!spte_has_volatile_bits(old_spte))
+		__update_clear_spte_fast(sptep, 0ull);
+	else
+		old_spte = __update_clear_spte_slow(sptep, 0ull);
+
+	if (!is_shadow_present_pte(old_spte))
+		return 0;
+
+	pfn = spte_to_pfn(old_spte);
+
+	/*
+	 * KVM does not hold the refcount of the page used by
+	 * kvm mmu, before reclaiming the page, we should
+	 * unmap it from mmu first.
+	 */
+	WARN_ON(!kvm_is_reserved_pfn(pfn) && !page_count(pfn_to_page(pfn)));
+
+	if (is_accessed_spte(old_spte))
+		kvm_set_pfn_accessed(pfn);
+
+	if (is_dirty_spte(old_spte))
+		kvm_set_pfn_dirty(pfn);
+
+	return 1;
+}
+#endif
 
 /*
  * Rules for using mmu_spte_clear_no_track:
  * Directly clear spte without caring the state bits of sptep,
  * it is used to set the upper level spte.
  */
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 static void mmu_spte_clear_no_track(struct kvm *kvm, u64 *sptep)
 {
 	__update_clear_spte_fast(sptep, 0ull);
     delete_dsag_node(kvm, sptep);
 }
+#else
+static void mmu_spte_clear_no_track(u64 *sptep)
+{
+	__update_clear_spte_fast(sptep, 0ull);
+}
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 
 static u64 mmu_spte_get_lockless(u64 *sptep)
 {
@@ -1336,7 +1376,7 @@ static void pte_list_remove(struct kvm_rmap_head *rmap_head, u64 *sptep)
 	mmu_spte_clear_track_bits(sptep);
 	__pte_list_remove(sptep, rmap_head);
 }
-#endif
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 
 static struct kvm_rmap_head *__gfn_to_rmap(gfn_t gfn, int level,
 					   struct kvm_memory_slot *slot)
@@ -1467,7 +1507,11 @@ out:
 
 static void drop_spte(struct kvm *kvm, u64 *sptep)
 {
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 	if (mmu_spte_clear_track_bits(kvm, sptep))
+#else
+	if (mmu_spte_clear_track_bits(sptep))
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 		rmap_remove(kvm, sptep);
 }
 
@@ -1726,7 +1770,12 @@ static bool kvm_zap_rmapp(struct kvm *kvm, struct kvm_rmap_head *rmap_head)
 	while ((sptep = rmap_get_first(rmap_head, &iter))) {
 		rmap_printk("%s: spte %p %llx.\n", __func__, sptep, *sptep);
 
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 		pte_list_remove(kvm, rmap_head, sptep);
+#else
+		pte_list_remove(rmap_head, sptep);
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
+
 		flush = true;
 	}
 
@@ -1762,7 +1811,11 @@ restart:
 		need_flush = 1;
 
 		if (pte_write(*ptep)) {
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 			pte_list_remove(kvm, rmap_head, sptep);
+#else
+			pte_list_remove(rmap_head, sptep);
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 			goto restart;
 		} else {
 			new_spte = *sptep & ~PT64_BASE_ADDR_MASK;
@@ -1773,7 +1826,11 @@ restart:
 
 			new_spte = mark_spte_for_access_track(new_spte);
 
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 			mmu_spte_clear_track_bits(kvm, sptep);
+#else
+			mmu_spte_clear_track_bits(sptep);
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 			mmu_spte_set(sptep, new_spte);
 		}
 	}
@@ -2044,13 +2101,13 @@ static void drop_parent_pte(struct kvm *kvm, struct kvm_mmu_page *sp,
                             u64 *parent_pte)
 {
 	mmu_page_remove_parent_pte(sp, parent_pte);
-	mmu_spte_clear_no_track(kvm, parent_pte);
+    mmu_spte_clear_no_track(kvm, parent_pte);
 }
 #else
 static void drop_parent_pte(struct kvm_mmu_page *sp, u64 *parent_pte)
 {
 	mmu_page_remove_parent_pte(sp, parent_pte);
-	mmu_spte_clear_no_track(parent_pte);
+    mmu_spte_clear_no_track(parent_pte);
 }
 #endif
 
@@ -2610,7 +2667,11 @@ static void validate_direct_spte(struct kvm_vcpu *vcpu, u64 *sptep,
 		if (child->role.access == direct_access)
 			return;
 
-		drop_parent_pte(vcpu->kvm, child, sptep);
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
+        drop_parent_pte(vcpu->kvm, child, sptep);
+#else
+        drop_parent_pte(child, sptep);
+#endif
 		kvm_flush_remote_tlbs_with_address(vcpu->kvm, child->gfn, 1);
 	}
 }
@@ -2629,13 +2690,22 @@ static bool mmu_page_zap_pte(struct kvm *kvm, struct kvm_mmu_page *sp,
 				--kvm->stat.lpages;
 		} else {
 			child = page_header(pte & PT64_BASE_ADDR_MASK);
-			drop_parent_pte(kvm, child, spte);
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
+            drop_parent_pte(kvm, child, spte);
+#else
+            drop_parent_pte(child, spte);
+#endif
 		}
 		return true;
 	}
 
-	if (is_mmio_spte(pte))
-		mmu_spte_clear_no_track(kvm, spte);
+	if (is_mmio_spte(pte)) {
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
+        mmu_spte_clear_no_track(kvm, spte);
+#else
+        mmu_spte_clear_no_track(spte);
+#endif
+    }
 
 	return false;
 }
@@ -2654,8 +2724,13 @@ static void kvm_mmu_unlink_parents(struct kvm *kvm, struct kvm_mmu_page *sp)
 	u64 *sptep;
 	struct rmap_iterator iter;
 
-	while ((sptep = rmap_get_first(&sp->parent_ptes, &iter)))
-		drop_parent_pte(kvm, sp, sptep);
+	while ((sptep = rmap_get_first(&sp->parent_ptes, &iter))) {
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
+        drop_parent_pte(kvm, sp, sptep);
+#else
+        drop_parent_pte(sp, sptep);
+#endif
+    }
 }
 
 static int mmu_zap_unsync_children(struct kvm *kvm,
@@ -3020,7 +3095,11 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep, unsigned pte_access,
 			u64 pte = *sptep;
 
 			child = page_header(pte & PT64_BASE_ADDR_MASK);
-			drop_parent_pte(vcpu->kvm, child, sptep);
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
+            drop_parent_pte(vcpu->kvm, child, sptep);
+#else
+            drop_parent_pte(child, sptep);
+#endif
 			flush = true;
 		} else if (pfn != spte_to_pfn(*sptep)) {
 			pgprintk("hfn old %llx new %llx\n",
@@ -3170,8 +3249,10 @@ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
 			direct_pte_prefetch(vcpu, iterator.sptep);
 			++vcpu->stat.pf_fixed;
 
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
             if (unlikely(dsag_mem_simulation(vcpu->kvm, pfn, gfn, iterator.sptep, iterator.level)))
                 return RET_PF_RETRY;
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 			break;
 		}
 
@@ -3186,8 +3267,10 @@ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
 
 			link_shadow_page(vcpu, iterator.sptep, sp);
 
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
             if (unlikely(dsag_mem_simulation(vcpu->kvm, pfn, gfn, iterator.sptep, iterator.level)))
                 return RET_PF_RETRY;
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 		}
 	}
 	return emulate;
@@ -4318,7 +4401,11 @@ static bool sync_mmio_spte(struct kvm_vcpu *vcpu, u64 *sptep, gfn_t gfn,
 {
 	if (unlikely(is_mmio_spte(*sptep))) {
 		if (gfn != get_mmio_spte_gfn(*sptep)) {
-			mmu_spte_clear_no_track(vcpu->kvm, sptep);
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
+            mmu_spte_clear_no_track(vcpu->kvm, sptep);
+#else
+            mmu_spte_clear_no_track(sptep);
+#endif
 			return true;
 		}
 
@@ -5779,7 +5866,11 @@ restart:
 		if (sp->role.direct &&
 			!kvm_is_reserved_pfn(pfn) &&
 			PageTransCompoundMap(pfn_to_page(pfn))) {
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
 			pte_list_remove(kvm, rmap_head, sptep);
+#else
+			pte_list_remove(rmap_head, sptep);
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 
 			if (kvm_available_flush_tlb_with_range())
 				kvm_flush_remote_tlbs_with_address(kvm, sp->gfn,

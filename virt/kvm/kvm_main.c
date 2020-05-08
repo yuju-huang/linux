@@ -3094,9 +3094,12 @@ static long kvm_vm_ioctl(struct file *filp,
 	switch (ioctl) {
     case KVM_ENABLE_DSAG_MEM_SIM: {
         struct kvm_dsag_mem_sim sim;
+        printk("KVM_ENABLE_DSAG_MEM_SIM\n");
 		if (copy_from_user(&sim, argp, sizeof(sim)))
 			goto out;
+#ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
         dsag_sim_init(kvm, sim.local_mem_size, sim.network_delay_in_us);
+#endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
         r = 0;
         break;
     }
