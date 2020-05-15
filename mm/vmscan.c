@@ -1530,7 +1530,21 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 	mod_node_page_state(zone->zone_pgdat, NR_ISOLATED_FILE, -ret);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(reclaim_clean_pages_from_list);
+
+unsigned long reclaim_pages(struct zone* zone, struct list_head* page_list)
+{
+	struct scan_control sc = {
+		.gfp_mask = GFP_KERNEL,
+		.priority = DEF_PRIORITY,
+		.may_unmap = 1,
+	};
+    unsigned long ret;
+
+	ret = shrink_page_list(page_list, zone->zone_pgdat, &sc, 0, NULL, true);
+	mod_node_page_state(zone->zone_pgdat, NR_ACTIVE_ANON, -ret);
+    return ret;
+}
+EXPORT_SYMBOL_GPL(reclaim_pages);
 
 /*
  * Attempt to remove the specified page from its LRU.  Only take this page

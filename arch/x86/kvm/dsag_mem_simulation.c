@@ -101,7 +101,9 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
         }
     }
 
+    spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
     dsag_printk(KERN_DEBUG, "%s end: num_free_pages=%d\n", __func__, dsag_mem->num_free_pages);
+    spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
     return 0;
 }
 
@@ -236,17 +238,20 @@ int dsag_swap_out_local_page(struct kvm *kvm, size_t num_swap_out)
     }
 
     // Prepare page list.
+    int tmp = 0;
     for (j = 0; j < i; ++j) {
-        page = pfn_to_page(victims[i]->pfn);
+        BUG_ON(!victims[j]);
+        page = pfn_to_page(victims[j]->pfn);
         BUG_ON(!page);
-        list_move(&page->lru, &page_list);
-
-        dsag_printk(KERN_DEBUG, "%s: add node sptep=0x%lx to swap-out list\n", __func__, (uintptr_t)(victims[i]->sptep));
+        list_add(&page->lru, &page_list);
+        // list_move(&page->lru, &page_list);
+        tmp += j;
     }
 
     // TODO: Need to make sure all the pages are in same zone.
     zone = page_zone(page);
-    nr_reclaimed = reclaim_clean_pages_from_list(zone, &page_list);
+    BUG_ON(!zone);
+    nr_reclaimed = reclaim_pages(zone, &page_list);
     
     // Update num_free_pages.
     spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
