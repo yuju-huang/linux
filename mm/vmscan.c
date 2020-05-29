@@ -1551,9 +1551,8 @@ unsigned long reclaim_pages(struct zone* zone, struct list_head* page_list, unsi
     return ret;
 }
 #else
-unsigned long reclaim_pages(struct page** pages, unsigned long nr_to_reclaim)
+unsigned long reclaim_pages(struct list_head* page_list, unsigned long nr_to_reclaim)
 {
-    LIST_HEAD(page_list);
     struct zone* zone;
     struct page* page;
     size_t i;
@@ -1568,6 +1567,8 @@ unsigned long reclaim_pages(struct page** pages, unsigned long nr_to_reclaim)
 		.hibernation_mode = 1,
 	};
 
+    printk("%s: nr_to_reclaim=%d\n", __func__, nr_to_reclaim);
+#if 0
     printk("%s, nr_to_reclaim=%d\n", __func__, nr_to_reclaim);
     // Prepare page list.
     for (i = 0; i < nr_to_reclaim; ++i) {
@@ -1593,12 +1594,16 @@ unsigned long reclaim_pages(struct page** pages, unsigned long nr_to_reclaim)
         list_move(&page->lru, &page_list);
         // list_add(&page->lru, &page_list);
     }
+#endif
 
     // TODO: Need to make sure all the pages are in same zone.
-    zone = page_zone(pages[0]);
+    page = lru_to_page(page_list);
+    BUG_ON(!page);
+    zone = page_zone(page);
+    BUG_ON(!zone);
+    BUG_ON(!zone->zone_pgdat);
 
-    // TODO: TTU_IGNORE_ACCESS?
-	ret = shrink_page_list(&page_list, zone->zone_pgdat, &sc, TTU_IGNORE_ACCESS, NULL, true, /* debug */true);
+	ret = shrink_page_list(page_list, zone->zone_pgdat, &sc, TTU_IGNORE_ACCESS, NULL, true, /* debug */true);
     // TODO: enable?
 	// mod_node_page_state(zone->zone_pgdat, NR_ACTIVE_ANON, -ret);
     return ret;

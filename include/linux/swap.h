@@ -383,7 +383,7 @@ extern unsigned long reclaim_pages(struct zone *zone,
                                    struct list_head *page_list,
                                    unsigned long nr_to_reclaim);
 #else
-extern unsigned long reclaim_pages(struct page **pages,
+extern unsigned long reclaim_pages(struct list_head* page_list,
                                    unsigned long nr_to_reclaim);
 #endif
 

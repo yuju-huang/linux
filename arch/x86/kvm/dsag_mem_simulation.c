@@ -20,6 +20,8 @@
 #define LOW_MEM_THRESHOLD 10
 #define FREE_POOL_WATERMARK 10000
 
+extern int isolate_lru_page(struct page *page);
+
 static inline bool valid_to_swap_out(struct dsag_mem_node *node)
 {
     // Only swap the page whose level is 1.
@@ -62,22 +64,22 @@ static struct dsag_mem_node* find_victim(const struct dsag_local_mem_t* dsag_mem
 static int dsag_swap_out_local_page(void *data)
 {
     struct kvm* kvm = (struct kvm*)data;
-    // LIST_HEAD(page_list);
-    struct zone* zone;
-    struct page *page, **pages;
-    struct dsag_mem_node *victim, **victims;
-    size_t i, j;
-    unsigned long nr_reclaimed;
-    uint32_t num_free_pages;
-    uint32_t num_swap_out;
+    struct dsag_mem_node *victim;
     unsigned long flags;
+    struct page* page;
+    struct list_head* pos;
     struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
+    unsigned long nr_reclaimed = 0;
+    unsigned long num_reclaim = 0;
+    uint32_t num_free_pages = 0;
+    uint32_t num_swap_out = 0;
+    uint32_t num_victim = 0;
+    size_t i;
 
     while (1) {
         spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
         num_free_pages = dsag_mem->num_free_pages;
         spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
-        printk("dsag_swap_out_local_page thread wake-up: num_free_pages=%d\n", num_free_pages);
 
         if (num_free_pages >= FREE_POOL_WATERMARK) {
             // sleep
@@ -86,22 +88,47 @@ static int dsag_swap_out_local_page(void *data)
             set_current_state(TASK_RUNNING);
             continue;
         } else {
+            spin_lock_irqsave(&dsag_mem->reclaim_list_lock, flags);
+            num_reclaim = dsag_mem->num_reclaim;
+            spin_unlock_irqrestore(&dsag_mem->reclaim_list_lock, flags);
+
             num_swap_out = FREE_POOL_WATERMARK - num_free_pages;
+            num_victim = (num_reclaim > num_swap_out) ? 0 : (num_swap_out - num_reclaim);
+            BUG_ON(num_swap_out < 0);
+            printk("%s1: num_swap_out=%d, num_reclaim=%d, num_victim=%d, num_free_pages=%d\n", __func__, num_swap_out, num_reclaim, num_victim, num_free_pages);
             dsag_printk(KERN_DEBUG, "%s: num_swap_out=%d, num_free_pages=%d\n", __func__, num_swap_out, num_free_pages);
-            printk("%s: num_swap_out=%d, num_free_pages=%d\n", __func__, num_swap_out, num_free_pages);
-            victims = kmalloc(num_swap_out * sizeof(struct dsag_mem_node*), GFP_KERNEL);
-            pages = kmalloc(num_swap_out * sizeof(struct page*), GFP_KERNEL);
 
             // Find victims.
-            for (i = 0; i < num_swap_out; ++i) {
+            LIST_HEAD(page_list);
+            for (i = 0; i < num_victim; ++i) {
                 victim = find_victim(dsag_mem);
                 if (victim && victim->sptep) {
-                    victim->mem_type = REMOTE_MEM;
-                    victims[i] = victim;
-
                     page = pfn_to_page(victim->pfn);
                     BUG_ON(!page);
-                    pages[i] = page;
+
+                    // If the page is active, clear it since the reclaim_pages only accept inactive pages.
+                    ClearPageActive(page);
+                    ClearPageReferenced(page);
+                    // TODO: dig more into shrink_active_list for calling get_page.
+                    get_page(page);
+                    ClearPageLRU(page);
+
+                    BUG_ON(&page->lru == LIST_POISON1); 
+                    BUG_ON(&page->lru == LIST_POISON2); 
+                    BUG_ON(&page->lru == NULL);
+                    BUG_ON(&(page->lru.prev) == LIST_POISON1); 
+                    BUG_ON(&(page->lru.prev) == LIST_POISON2); 
+                    BUG_ON(&(page->lru.prev) == NULL);
+                    BUG_ON(&(page->lru.next) == LIST_POISON1); 
+                    BUG_ON(&(page->lru.next) == LIST_POISON2); 
+                    BUG_ON(&(page->lru.next) == NULL);
+                    if (list_empty(&page->lru))
+                        list_add(&page->lru, &page_list);
+                    else
+                       list_move(&page->lru, &page_list);
+
+                    // Ready to swap out.
+                    victim->mem_type = REMOTE_MEM;
                 } else {
                     break;
                 }
@@ -112,51 +139,32 @@ static int dsag_swap_out_local_page(void *data)
                 continue;
             }
 
-#if 0
-            // TODO: put here due to the page_list is not clear after reclaim. Should be put to other place.
-            LIST_HEAD(page_list);
-            // Prepare page list.
-            for (j = 0; j < i; ++j) {
-                BUG_ON(!victims[j]);
-                page = pfn_to_page(victims[j]->pfn);
-                dsag_printk(KERN_DEBUG, "%s: page=0x%llx\n", __func__, page);
-                printk("%s: page=0x%llx\n", __func__, page);
-                BUG_ON(!page);
-                // If the page is in active_list, remove it since the reclaim_pages only accept inactive pages.
-                int lru = page_lru(page);
-                if (lru == LRU_ACTIVE_ANON) {
-                    zone = page_zone(page);
-
-                    spin_lock_irq(zone_lru_lock(zone));
-                    ClearPageActive(page);
-                    ClearPageReferenced(page);
-                    struct lruvec* lruvec = &(zone->zone_pgdat->lruvec); //mem_cgroup_page_lruvec(page, zone->zone_pgdat);
-                    del_page_from_lru_list(page, lruvec, lru);
-                    add_page_to_lru_list(page, lruvec, LRU_INACTIVE_ANON);
-                    spin_unlock_irq(zone_lru_lock(zone));
-                }
-
-                // Use list_add, the reclaim_pages will do list_del(page->lru).
-                list_add(&page->lru, &page_list);
+            // TODO: Need lock if there is only one swapper thread?
+            spin_lock_irqsave(&dsag_mem->reclaim_list_lock, flags);
+            list_for_each(pos, &dsag_mem->reclaim_list) {
+                page = list_entry(pos, struct page, lru);
+                ClearPageActive(page);
+                ClearPageReferenced(page);
+                ClearPageLRU(page); 
             }
+            list_splice_tail(&page_list, &dsag_mem->reclaim_list);
+            dsag_mem->num_reclaim += i;
+            num_reclaim = dsag_mem->num_reclaim;
+            spin_unlock_irqrestore(&dsag_mem->reclaim_list_lock, flags);
+            printk("%s2: num_swap_out=%d, num_reclaim=%d, num_free_pages=%d\n", __func__, num_swap_out, num_reclaim, num_free_pages);
 
-            // TODO: Need to make sure all the pages are in same zone.
-            zone = page_zone(page);
-            BUG_ON(!zone);
-            nr_reclaimed = reclaim_pages(zone, &page_list, num_swap_out);
-            dsag_printk(KERN_DEBUG, "%s: done reclaim_pages, nr_reclaimed=%ld, i=%ld, j=%ld\n", __func__, nr_reclaimed, i, j);
-            printk("%s: done reclaim_pages, nr_reclaimed=%ld, i=%ld, j=%ld\n", __func__, nr_reclaimed, i, j);
-#else
-            nr_reclaimed = reclaim_pages(pages, i);
-            printk("%s: done reclaim_pages, nr_reclaimed=%ld, i=%ld\n", __func__, nr_reclaimed, i);
-#endif
+            // Update num_reclaim.
+            nr_reclaimed = reclaim_pages(&dsag_mem->reclaim_list, num_reclaim);
+            printk("%s: done reclaim_pages, nr_reclaimed=%ld, num_reclaim=%ld\n", __func__, nr_reclaimed, dsag_mem->num_reclaim);
+            spin_lock_irqsave(&dsag_mem->reclaim_list_lock, flags);
+            dsag_mem->num_reclaim -= nr_reclaimed;
+            BUG_ON(dsag_mem->num_reclaim < 0);
+            spin_unlock_irqrestore(&dsag_mem->reclaim_list_lock, flags);
 
             // Update num_free_pages.
             spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
-            dsag_mem->num_free_pages += i;
+            dsag_mem->num_free_pages += nr_reclaimed;
             spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
-            kfree(victims);
-            kfree(pages);
         }
     }
     return 0;
@@ -170,12 +178,19 @@ void dsag_sim_init(struct kvm *kvm, int local_mem_size, int network_delay)
     struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
     const unsigned long size_in_byte = local_mem_size * MB;
 
+    // TODO: Only initialize once. Here is simply a workaround.
+    if (dsag_mem->swapper_thread) return;
+
     hash_init(dsag_mem->local_mem_list);
-    // TODO: how to destroy thread.
-    dsag_mem->swapper_thread = kthread_create(dsag_swap_out_local_page, kvm, "dsag_local_mem_swapper");
     dsag_mem->num_total_pages = size_in_byte / PAGE_SIZE;
     dsag_mem->num_free_pages = dsag_mem->num_total_pages;
     spin_lock_init(&dsag_mem->free_page_lock);
+
+    // TODO: how to destroy thread.
+    dsag_mem->swapper_thread = kthread_create(dsag_swap_out_local_page, kvm, "dsag_local_mem_swapper");
+    INIT_LIST_HEAD(&dsag_mem->reclaim_list);
+    dsag_mem->num_reclaim = 0;
+    spin_lock_init(&dsag_mem->reclaim_list_lock);
 
     // TODO: register this kvm to swapper thread.
     dsag_printk(KERN_DEBUG, "%s, local_mem_size=%d, num_total_pages=%d\n", __func__, local_mem_size, dsag_mem->num_total_pages);
@@ -220,7 +235,6 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
     spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
     num_free_pages = dsag_mem->num_free_pages;
     spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
-    printk("%s start: num_free_pages=%d\n", __func__, num_free_pages);
     if (num_free_pages == 0) {
         BUG_ON(!dsag_mem->swapper_thread);
         wake_up_process(dsag_mem->swapper_thread);
@@ -260,7 +274,6 @@ int dsag_mem_simulation(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, u64 *sptep, i
     spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
     num_free_pages = dsag_mem->num_free_pages;
     dsag_printk(KERN_DEBUG, "%s end: num_free_pages=%d\n", __func__, num_free_pages);
-    printk("%s end: num_free_pages=%d\n", __func__, num_free_pages);
     spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
     // TODO: may use the old num_free_pages
     BUG_ON(!dsag_mem->swapper_thread);
