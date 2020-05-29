@@ -378,8 +378,14 @@ extern void check_move_unevictable_pages(struct pagevec *pvec);
 extern int kswapd_run(int nid);
 extern void kswapd_stop(int nid);
 
+#if 0
 extern unsigned long reclaim_pages(struct zone *zone,
-                                   struct list_head *page_list);
+                                   struct list_head *page_list,
+                                   unsigned long nr_to_reclaim);
+#else
+extern unsigned long reclaim_pages(struct page **pages,
+                                   unsigned long nr_to_reclaim);
+#endif
 
 #ifdef CONFIG_SWAP
 

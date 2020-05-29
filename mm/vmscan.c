@@ -1525,25 +1525,85 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 	}
 
 	ret = shrink_page_list(&clean_pages, zone->zone_pgdat, &sc,
-			TTU_IGNORE_ACCESS, NULL, true);
+			TTU_IGNORE_ACCESS, NULL, true, /* debug */false);
 	list_splice(&clean_pages, page_list);
 	mod_node_page_state(zone->zone_pgdat, NR_ISOLATED_FILE, -ret);
 	return ret;
 }
 
-unsigned long reclaim_pages(struct zone* zone, struct list_head* page_list)
+#if 0
+unsigned long reclaim_pages(struct zone* zone, struct list_head* page_list, unsigned long nr_to_reclaim)
 {
 	struct scan_control sc = {
+		.nr_to_reclaim = nr_to_reclaim,
 		.gfp_mask = GFP_KERNEL,
 		.priority = DEF_PRIORITY,
+		.may_writepage = 1,
 		.may_unmap = 1,
+		.may_swap = 1,
+		.hibernation_mode = 1,
 	};
     unsigned long ret;
 
-	ret = shrink_page_list(page_list, zone->zone_pgdat, &sc, 0, NULL, true);
+    // TODO: TTU_IGNORE_ACCESS?
+	ret = shrink_page_list(page_list, zone->zone_pgdat, &sc, TTU_IGNORE_ACCESS, NULL, true, /* debug */true);
 	mod_node_page_state(zone->zone_pgdat, NR_ACTIVE_ANON, -ret);
     return ret;
 }
+#else
+unsigned long reclaim_pages(struct page** pages, unsigned long nr_to_reclaim)
+{
+    LIST_HEAD(page_list);
+    struct zone* zone;
+    struct page* page;
+    size_t i;
+    unsigned long ret;
+	struct scan_control sc = {
+		.nr_to_reclaim = nr_to_reclaim,
+		.gfp_mask = GFP_KERNEL,
+		.priority = DEF_PRIORITY,
+		.may_writepage = 1,
+		.may_unmap = 1,
+		.may_swap = 1,
+		.hibernation_mode = 1,
+	};
+
+    printk("%s, nr_to_reclaim=%d\n", __func__, nr_to_reclaim);
+    // Prepare page list.
+    for (i = 0; i < nr_to_reclaim; ++i) {
+        page = pages[i];
+        
+        // If the page is in active_list, remove it since the reclaim_pages only accept inactive pages.
+        int lru = page_lru(page);
+        printk("%s1: lru=%d, page=0x%llx, PageActive=%d, PageReferenced=%d, page_count=%d\n", __func__, lru, page, PageActive(page), PageReferenced(page), page_count(page));
+//        if (lru == LRU_ACTIVE_ANON) {
+//            zone = page_zone(page);
+
+//            spin_lock_irq(zone_lru_lock(zone));
+            ClearPageLRU(page);
+            ClearPageActive(page);
+            ClearPageReferenced(page);
+            printk("%s2: lru=%d, page=0x%llx, PageActive=%d, PageReferenced=%d, page_count=%d\n", __func__, lru, page, PageActive(page), PageReferenced(page), page_count(page));
+//            struct lruvec* lruvec = mem_cgroup_page_lruvec(page, zone->zone_pgdat);
+//            del_page_from_lru_list(page, lruvec, lru);
+//            add_page_to_lru_list(page, lruvec, LRU_INACTIVE_ANON);
+//            spin_unlock_irq(zone_lru_lock(zone));
+//        }
+
+        list_move(&page->lru, &page_list);
+        // list_add(&page->lru, &page_list);
+    }
+
+    // TODO: Need to make sure all the pages are in same zone.
+    zone = page_zone(pages[0]);
+
+    // TODO: TTU_IGNORE_ACCESS?
+	ret = shrink_page_list(&page_list, zone->zone_pgdat, &sc, TTU_IGNORE_ACCESS, NULL, true, /* debug */true);
+    // TODO: enable?
+	// mod_node_page_state(zone->zone_pgdat, NR_ACTIVE_ANON, -ret);
+    return ret;
+}
+#endif
 EXPORT_SYMBOL_GPL(reclaim_pages);
 
 /*
