@@ -750,6 +750,7 @@ static inline int is_page_cache_freeable(struct page *page)
 	 */
 	int page_cache_pins = PageTransHuge(page) && PageSwapCache(page) ?
 		HPAGE_PMD_NR : 1;
+    printk("%s: page=0x%llx, page_cache_pins=%d, page_count=%d\n", __func__, page, page_cache_pins, page_count(page)); // has_private=0, 1, 1
 	return page_count(page) - page_has_private(page) == 1 + page_cache_pins;
 }
 
@@ -820,8 +821,13 @@ static pageout_t pageout(struct page *page, struct address_space *mapping,
 	 * swap_backing_dev_info is bust: it doesn't reflect the
 	 * congestion state of the swapdevs.  Easy to fix, if needed.
 	 */
+    printk("%s: page=0x%llx, is_page_cache_freeable=%d, page_has_private=%d, mapping=0x%llx\n", __func__, page, is_page_cache_freeable(page), page_has_private(page), mapping);
+
+    // TODO: remove
+#if 0
 	if (!is_page_cache_freeable(page))
 		return PAGE_KEEP;
+#endif
 	if (!mapping) {
 		/*
 		 * Some data journaling orphaned pages can have
@@ -853,6 +859,7 @@ static pageout_t pageout(struct page *page, struct address_space *mapping,
 
 		SetPageReclaim(page);
 		res = mapping->a_ops->writepage(page, &wbc);
+        printk("%s: page=%0xllx, writepage return %d\n", __func__, page, res);
 		if (res < 0)
 			handle_write_error(mapping, page, res);
 		if (res == AOP_WRITEPAGE_ACTIVATE) {
@@ -1019,6 +1026,7 @@ static enum page_references page_check_references(struct page *page,
 					  &vm_flags);
 	referenced_page = TestClearPageReferenced(page);
 
+    printk("%s: referenced_ptes=%d, referenced_page=%d\n", __func__, referenced_ptes, referenced_page);
 	/*
 	 * Mlock lost the isolation race with us.  Let try_to_unmap()
 	 * move the page to the unevictable list.
@@ -1102,7 +1110,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				      struct scan_control *sc,
 				      enum ttu_flags ttu_flags,
 				      struct reclaim_stat *stat,
-				      bool force_reclaim)
+				      bool force_reclaim, bool debug)
 {
 	LIST_HEAD(ret_pages);
 	LIST_HEAD(free_pages);
@@ -1118,6 +1126,8 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 
 	cond_resched();
 
+    int i = 0;
+    debug = true;
 	while (!list_empty(page_list)) {
 		struct address_space *mapping;
 		struct page *page;
@@ -1147,6 +1157,9 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		if ((page_mapped(page) || PageSwapCache(page)) &&
 		    !(PageAnon(page) && !PageSwapBacked(page)))
 			sc->nr_scanned++;
+
+        printk("%s-1: i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+              __func__, i++, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
 
 		may_enter_fs = (sc->gfp_mask & __GFP_FS) ||
 			(PageSwapCache(page) && (sc->gfp_mask & __GFP_IO));
@@ -1223,12 +1236,14 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			if (current_is_kswapd() &&
 			    PageReclaim(page) &&
 			    test_bit(PGDAT_WRITEBACK, &pgdat->flags)) {
+                printk("shrink_page_list1-writeback case1, page=0x%llx\n", page);
 				nr_immediate++;
 				goto activate_locked;
 
 			/* Case 2 above */
 			} else if (sane_reclaim(sc) ||
 			    !PageReclaim(page) || !may_enter_fs) {
+                printk("shrink_page_list2-writeback case1, page=0x%llx\n", page);
 				/*
 				 * This is slightly racy - end_page_writeback()
 				 * might have just cleared PageReclaim, then
@@ -1246,6 +1261,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 
 			/* Case 3 above */
 			} else {
+                printk("shrink_page_list3-writeback case1, page=0x%llx\n", page);
 				unlock_page(page);
 				wait_on_page_writeback(page);
 				/* then go back and try same page again */
@@ -1254,8 +1270,13 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			}
 		}
 
+        if (debug)
+            printk("shrink_page_list1, page=0x%llx\n", page);
+
 		if (!force_reclaim)
 			references = page_check_references(page, sc);
+        if (debug)
+			references = PAGEREF_RECLAIM;
 
 		switch (references) {
 		case PAGEREF_ACTIVATE:
@@ -1268,6 +1289,8 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			; /* try to reclaim the page below */
 		}
 
+        if (debug)
+            printk("shrink_page_list2, page=0x%llx, references=%d\n", page, references);
 		/*
 		 * Anonymous process memory has backing store?
 		 * Try to allocate it some swap space here.
@@ -1316,6 +1339,10 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				goto keep_locked;
 		}
 
+        if (debug) {
+            printk("%s3 (after add_to_swap): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+                  __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
+        }
 		/*
 		 * The page is mapped into the page tables of one or more
 		 * processes. Try to unmap it here.
@@ -1327,9 +1354,16 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				flags |= TTU_SPLIT_HUGE_PMD;
 			if (!try_to_unmap(page, flags)) {
 				nr_unmap_fail++;
+                if (debug)
+                    printk("shrink_page_list4-0, page=0x%llx: try_to_unmap fail\n", page);
 				goto activate_locked;
 			}
 		}
+
+        if (debug) {
+            printk("%s4 (after try_to_unmap): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+                  __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
+        }
 
 		if (PageDirty(page)) {
 			/*
@@ -1354,23 +1388,39 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				inc_node_page_state(page, NR_VMSCAN_IMMEDIATE);
 				SetPageReclaim(page);
 
+                if (debug)
+                    printk("shrink_page_list5-0, page=0x%llx\n", page);
 				goto activate_locked;
 			}
 
-			if (references == PAGEREF_RECLAIM_CLEAN)
+    		if (references == PAGEREF_RECLAIM_CLEAN) {
+                if (debug) printk("shrink_page_list5-1, page=0x%llx\n", page);
+    			goto keep_locked;
+            }
+			if (!may_enter_fs) {
+                if (debug) printk("shrink_page_list5-2, page=0x%llx\n", page);
 				goto keep_locked;
-			if (!may_enter_fs)
+            }
+			if (!sc->may_writepage) {
+                if (debug) printk("shrink_page_list5-3, page=0x%llx\n", page);
 				goto keep_locked;
-			if (!sc->may_writepage)
-				goto keep_locked;
+            }
 
+            if (debug) printk("shrink_page_list5-4, page=0x%llx\n", page);
 			/*
 			 * Page is dirty. Flush the TLB if a writable entry
 			 * potentially exists to avoid CPU writes after IO
 			 * starts and then write it out here.
 			 */
 			try_to_unmap_flush_dirty();
-			switch (pageout(page, mapping, sc)) {
+            int tmp = pageout(page, mapping, sc);
+            printk("%s: after pageout page=0x%llx, tmp=%d\n", __func__, page, tmp);
+            if (debug) {
+                printk("%s5 (after pageout1): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+                      __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
+            }
+//			switch (pageout(page, mapping, sc)) {
+            switch (tmp) {
 			case PAGE_KEEP:
 				goto keep_locked;
 			case PAGE_ACTIVATE:
@@ -1385,8 +1435,10 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 				 * A synchronous write - probably a ramdisk.  Go
 				 * ahead and try to reclaim the page.
 				 */
-				if (!trylock_page(page))
+				if (!trylock_page(page)) {
+                    if (debug) printk("shrink_page_list5-5, page=0x%llx\n", page);
 					goto keep;
+                }
 				if (PageDirty(page) || PageWriteback(page))
 					goto keep_locked;
 				mapping = page_mapping(page);
@@ -1395,6 +1447,10 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 			}
 		}
 
+        if (debug) {
+            printk("%s5 (after pageout2): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+                  __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
+        }
 		/*
 		 * If the page has buffers, try to free the buffer mappings
 		 * associated with this page. If we succeed we try to free
@@ -1432,10 +1488,13 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 					 * leave it off the LRU).
 					 */
 					nr_reclaimed++;
+                    printk("reclaim1, page=0x%llx\n", page);
 					continue;
 				}
 			}
 		}
+        if (debug)
+            printk("shrink_page_list6 page=0x%llx, mapping=0x%llx\n", page, mapping);
 
 		if (PageAnon(page) && !PageSwapBacked(page)) {
 			/* follow __remove_mapping for reference */
@@ -1453,6 +1512,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 
 		unlock_page(page);
 free_it:
+        printk("reclaim2, page=0x%llx\n", page);
 		nr_reclaimed++;
 
 		/*
@@ -2029,7 +2089,7 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 		return 0;
 
 	nr_reclaimed = shrink_page_list(&page_list, pgdat, sc, 0,
-				&stat, false);
+				&stat, false, /* debug */false);
 
 	spin_lock_irq(&pgdat->lru_lock);
 
