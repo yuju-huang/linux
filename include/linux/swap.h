@@ -386,6 +386,12 @@ extern unsigned long reclaim_pages(struct zone *zone,
 extern unsigned long reclaim_pages(struct list_head* page_list,
                                    unsigned long nr_to_reclaim);
 #endif
+extern unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
+				      struct pglist_data *pgdat,
+				      struct scan_control *sc,
+				      enum ttu_flags ttu_flags,
+				      struct reclaim_stat *stat,
+				      bool force_reclaim, bool debug);
 
 #ifdef CONFIG_SWAP
 
