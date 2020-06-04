@@ -22,7 +22,7 @@ struct dsag_local_mem_t {
 
     // Reclaim list
     struct list_head reclaim_list;
-    uint32_t num_reclaim;
+    uint32_t num_under_reclaim;
     spinlock_t reclaim_list_lock;
     struct task_struct* swapper_thread;
 };

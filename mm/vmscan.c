@@ -2029,7 +2029,6 @@ keep:
 	}
 	return nr_reclaimed;
 }
-EXPORT_SYMBOL_GPL(reclaim_dsag_local_pages);
 
 unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 					    struct list_head *page_list)
