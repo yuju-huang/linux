@@ -378,14 +378,12 @@ extern void check_move_unevictable_pages(struct pagevec *pvec);
 extern int kswapd_run(int nid);
 extern void kswapd_stop(int nid);
 
-#if 0
-extern unsigned long reclaim_pages(struct zone *zone,
-                                   struct list_head *page_list,
-                                   unsigned long nr_to_reclaim);
-#else
+// Return the number of page reclaimed. NOTE: some page may be move to
+// active_list, as numbered by out argument nr_activated.
 extern unsigned long reclaim_pages(struct list_head* page_list,
-                                   unsigned long nr_to_reclaim);
-#endif
+                                   struct list_head* activate_list,
+                                   unsigned long nr_to_reclaim,
+                                   unsigned long* nr_activated);
 
 #ifdef CONFIG_SWAP
 
