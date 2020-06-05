@@ -383,7 +383,8 @@ extern void kswapd_stop(int nid);
 extern unsigned long reclaim_pages(struct list_head* page_list,
                                    struct list_head* activate_list,
                                    unsigned long nr_to_reclaim,
-                                   unsigned long* nr_activated);
+                                   unsigned long* nr_activated,
+                                   bool debug);
 
 #ifdef CONFIG_SWAP
 

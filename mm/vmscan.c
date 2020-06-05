@@ -63,8 +63,6 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/vmscan.h>
 
-#define DSAG_DEBUG 0
-
 struct scan_control {
 	/* How many pages shrink_list() should reclaim */
 	unsigned long nr_to_reclaim;
@@ -1565,7 +1563,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 			sc->nr_scanned++;
 
         if (debug) {
-            printk("%s-1: i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+            printk("%s-1: i=%d, may_writepage=%d, page=%p, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
                   __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
         }
 
@@ -1644,14 +1642,14 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 			if (current_is_kswapd() &&
 			    PageReclaim(page) &&
 			    test_bit(PGDAT_WRITEBACK, &pgdat->flags)) {
-                if (debug) printk("%s1-writeback case1, page=0x%llx\n", __func__, page);
+                if (debug) printk("%s1-writeback case1, page=%p\n", __func__, page);
 				nr_immediate++;
 				goto activate_locked;
 
 			/* Case 2 above */
 			} else if (sane_reclaim(sc) ||
 			    !PageReclaim(page) || !may_enter_fs) {
-                if (debug) printk("%s2-writeback case1, page=0x%llx\n", __func__, page);
+                if (debug) printk("%s2-writeback case1, page=%p\n", __func__, page);
 				/*
 				 * This is slightly racy - end_page_writeback()
 				 * might have just cleared PageReclaim, then
@@ -1669,7 +1667,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 
 			/* Case 3 above */
 			} else {
-                if (debug) printk("%s3-writeback case1, page=0x%llx\n", __func__, page);
+                if (debug) printk("%s3-writeback case1, page=%p\n", __func__, page);
 				unlock_page(page);
 				wait_on_page_writeback(page);
 				/* then go back and try same page again */
@@ -1679,7 +1677,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 		}
 
         if (debug)
-            printk("%s1, page=0x%llx\n", __func__, page);
+            printk("%s1, page=%p\n", __func__, page);
 
 		switch (references) {
 		case PAGEREF_ACTIVATE:
@@ -1693,7 +1691,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 		}
 
         if (debug)
-            printk("%s2 page=0x%llx, references=%d\n", __func__, page, references);
+            printk("%s2 page=%p, references=%d\n", __func__, page, references);
 		/*
 		 * Anonymous process memory has backing store?
 		 * Try to allocate it some swap space here.
@@ -1743,7 +1741,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 		}
 
         if (debug) {
-            printk("%s3 (after add_to_swap): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+            printk("%s3 (after add_to_swap): i=%d, may_writepage=%d, page=%p, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
                   __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
         }
 		/*
@@ -1758,13 +1756,13 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 			if (!try_to_unmap(page, flags)) {
 				nr_unmap_fail++;
                 if (debug)
-                    printk("%s4-0, page=0x%llx: try_to_unmap fail\n", __func__, page);
+                    printk("%s4-0, page=%p: try_to_unmap fail\n", __func__, page);
 				goto activate_locked;
 			}
 		}
 
         if (debug) {
-            printk("%s4 (after try_to_unmap): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+            printk("%s4 (after try_to_unmap): i=%d, may_writepage=%d, page=%p, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
                   __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
         }
 
@@ -1792,24 +1790,24 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 				SetPageReclaim(page);
 
                 if (debug)
-                    printk("%s5-0, page=0x%llx\n", __func__, page);
+                    printk("%s5-0, page=%p\n", __func__, page);
 				goto activate_locked;
 			}
 
             if (references == PAGEREF_RECLAIM_CLEAN) {
-                if (debug) printk("%s5-1, page=0x%llx\n", __func__, page);
+                if (debug) printk("%s5-1, page=%p\n", __func__, page);
                 goto keep_locked;
             }
 			if (!may_enter_fs) {
-                if (debug) printk("%s5-2, page=0x%llx\n", __func__, page);
+                if (debug) printk("%s5-2, page=%p\n", __func__, page);
 				goto keep_locked;
             }
 			if (!sc->may_writepage) {
-                if (debug) printk("%s5-3, page=0x%llx\n", __func__, page);
+                if (debug) printk("%s5-3, page=%p\n", __func__, page);
 				goto keep_locked;
             }
 
-            if (debug) printk("%s5-4, page=0x%llx\n", __func__, page);
+            if (debug) printk("%s5-4, page=%p\n", __func__, page);
 			/*
 			 * Page is dirty. Flush the TLB if a writable entry
 			 * potentially exists to avoid CPU writes after IO
@@ -1818,8 +1816,8 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 			try_to_unmap_flush_dirty();
             int tmp = pageout(page, mapping, sc);
             if (debug) {
-                printk("%s5: after pageout page=0x%llx, tmp=%d\n", __func__, page, tmp);
-                printk("%s5 (after pageout1): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+                printk("%s5: after pageout page=%p, tmp=%d\n", __func__, page, tmp);
+                printk("%s5 (after pageout1): i=%d, may_writepage=%d, page=%p, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
                       __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
             }
 //			switch (pageout(page, mapping, sc)) {
@@ -1839,7 +1837,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 				 * ahead and try to reclaim the page.
 				 */
 				if (!trylock_page(page)) {
-                    if (debug) printk("%s5-5, page=0x%llx\n", __func__, page);
+                    if (debug) printk("%s5-5, page=%p\n", __func__, page);
 					goto keep;
                 }
 				if (PageDirty(page) || PageWriteback(page))
@@ -1851,7 +1849,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 		}
 
         if (debug) {
-            printk("%s5 (after pageout2): i=%d, may_writepage=%d, page=0x%llx, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
+            printk("%s5 (after pageout2): i=%d, may_writepage=%d, page=%p, PageActive=%d. PageReferenced=%d, page_mapped=%d, PageSwapCache=%d, PageAnon=%d, PageSwapBacked=%d, page_has_private=%d, page_count=%d, PageUnevictable=%d, PageLRU=%d, PageSwapCache=%d, PageWriteback=%d, PageDirty=%d, page_is_file_cache=%d, PageReclaim=%d\n",
                   __func__, i, sc->may_writepage, page, PageActive(page), PageReferenced(page), page_mapped(page), PageSwapCache(page), PageAnon(page), PageSwapBacked(page), page_has_private(page), page_count(page), PageUnevictable(page), PageLRU(page), PageSwapCache(page), PageWriteback(page), PageDirty(page), page_is_file_cache(page), PageReclaim(page));
         }
 		/*
@@ -1891,13 +1889,13 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 					 * leave it off the LRU).
 					 */
 					nr_reclaimed++;
-                    printk("reclaim1, page=0x%llx\n", page);
+                    printk("reclaim1, page=%p\n", page);
 					continue;
 				}
 			}
 		}
         if (debug)
-            printk("%s6 page=0x%llx, mapping=0x%llx, page_ref_count=%d\n", __func__, page, mapping, page_ref_count(page));
+            printk("%s6 page=%p, mapping=0x%llx, page_ref_count=%d\n", __func__, page, mapping, page_ref_count(page));
 
 		if (PageAnon(page) && !PageSwapBacked(page)) {
 			/* follow __remove_mapping for reference */
@@ -1915,7 +1913,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 
 		unlock_page(page);
 free_it:
-        if (debug) printk("%s: reclaim2, page=0x%llx\n", __func__, page);
+        if (debug) printk("%s: reclaim2, page=%p\n", __func__, page);
 		nr_reclaimed++;
 
 		/*
@@ -4800,7 +4798,7 @@ void check_move_unevictable_pages(struct pagevec *pvec)
 }
 EXPORT_SYMBOL_GPL(check_move_unevictable_pages);
 
-unsigned long reclaim_pages(struct list_head* page_list, struct list_head* activate_list, unsigned long nr_to_reclaim, unsigned long* nr_activated)
+unsigned long reclaim_pages(struct list_head* page_list, struct list_head* activate_list, unsigned long nr_to_reclaim, unsigned long* nr_activated, bool debug)
 {
     struct zone* zone;
     struct page* page;
@@ -4826,12 +4824,12 @@ unsigned long reclaim_pages(struct list_head* page_list, struct list_head* activ
     pgdat = zone->zone_pgdat;
     BUG_ON(!pgdat);
 
-    if (DSAG_DEBUG) {
-        printk("%s: nr_to_reclaim=%d, page=0x%llx, zone=0x%llx, pgdat=0x%llx\n",
+    if (debug) {
+        printk("%s: nr_to_reclaim=%d, page=%p, zone=%p, pgdat=%p\n",
                __func__, nr_to_reclaim, page, zone, pgdat);
     }
 	ret = reclaim_dsag_local_pages(page_list, activate_list, pgdat, &sc,
-                                   TTU_IGNORE_ACCESS, &stat, true, DSAG_DEBUG);
+                                   TTU_IGNORE_ACCESS, &stat, true, debug);
     *nr_activated = stat.nr_activate;
     return ret;
 }
