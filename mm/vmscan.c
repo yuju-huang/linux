@@ -1547,7 +1547,7 @@ static unsigned long reclaim_dsag_local_pages(struct list_head *page_list,
 		if (!trylock_page(page))
 			goto keep;
 
-		VM_BUG_ON_PAGE(PageActive(page), page);
+//		VM_BUG_ON_PAGE(PageActive(page), page);
 
 		sc->nr_scanned++;
 
@@ -1932,7 +1932,7 @@ activate_locked:
 		if (PageSwapCache(page) && (mem_cgroup_swap_full(page) ||
 						PageMlocked(page)))
 			try_to_free_swap(page);
-		VM_BUG_ON_PAGE(PageActive(page), page);
+		// VM_BUG_ON_PAGE(PageActive(page), page);
 		if (!PageMlocked(page)) {
 			SetPageActive(page);
 			pgactivate++;
@@ -1941,11 +1941,15 @@ activate_locked:
 keep_locked:
 		unlock_page(page);
 keep:
+#if 0
         if (PageActive(page))
 		    list_add(&page->lru, activate_list);
         else
             list_add(&page->lru, &ret_pages);
-		VM_BUG_ON_PAGE(PageLRU(page) || PageUnevictable(page), page);
+#else
+        list_add(&page->lru, &ret_pages);
+#endif
+//		VM_BUG_ON_PAGE(PageLRU(page) || PageUnevictable(page), page);
 	}
 
 	mem_cgroup_uncharge_list(&free_pages);
@@ -4798,6 +4802,35 @@ void check_move_unevictable_pages(struct pagevec *pvec)
 }
 EXPORT_SYMBOL_GPL(check_move_unevictable_pages);
 
+#if 1
+unsigned long reclaim_pages(struct list_head* page_list, unsigned long nr_to_reclaim)
+{
+    struct zone* zone;
+    struct page* page;
+    unsigned long ret;
+    struct scan_control sc = {
+        .nr_to_reclaim = nr_to_reclaim,
+        .gfp_mask = GFP_KERNEL,
+        .priority = DEF_PRIORITY,
+        .may_writepage = 1,
+        .may_unmap = 1,
+        .may_swap = 1,
+        .hibernation_mode = 1,
+    };
+
+    printk("%s: nr_to_reclaim=%d\n", __func__, nr_to_reclaim);
+
+    // TODO: Need to make sure all the pages are in same zone.
+    page = lru_to_page(page_list);
+    BUG_ON(!page);
+    zone = page_zone(page);
+    BUG_ON(!zone);
+    BUG_ON(!zone->zone_pgdat);
+
+    ret = reclaim_dsag_local_pages(page_list, NULL, zone->zone_pgdat, &sc, TTU_IGNORE_ACCESS, NULL, true, /* debug */true);
+    return ret;
+}
+#else
 unsigned long reclaim_pages(struct list_head* page_list, struct list_head* activate_list, unsigned long nr_to_reclaim, unsigned long* nr_activated, bool debug)
 {
     struct zone* zone;
@@ -4833,4 +4866,5 @@ unsigned long reclaim_pages(struct list_head* page_list, struct list_head* activ
     *nr_activated = stat.nr_activate;
     return ret;
 }
+#endif
 EXPORT_SYMBOL_GPL(reclaim_pages);

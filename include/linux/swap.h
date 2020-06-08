@@ -380,11 +380,16 @@ extern void kswapd_stop(int nid);
 
 // Return the number of page reclaimed. NOTE: some page may be move to
 // active_list, as numbered by out argument nr_activated.
+#if 1
+extern unsigned long reclaim_pages(struct list_head* page_list,
+                                   unsigned long nr_to_reclaim);
+#else
 extern unsigned long reclaim_pages(struct list_head* page_list,
                                    struct list_head* activate_list,
                                    unsigned long nr_to_reclaim,
                                    unsigned long* nr_activated,
                                    bool debug);
+#endif
 
 #ifdef CONFIG_SWAP
 
