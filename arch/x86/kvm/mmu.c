@@ -3250,8 +3250,9 @@ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
 			++vcpu->stat.pf_fixed;
 
 #ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
-            if (unlikely(dsag_mem_simulation(vcpu->kvm, pfn, gfn, iterator.sptep, iterator.level)))
-                return RET_PF_RETRY;
+            if (vcpu->kvm->dsag_local_mem.dsag_enable)
+                if (unlikely(dsag_mem_simulation(vcpu->kvm, pfn, gfn, iterator.sptep, iterator.level)))
+                    return RET_PF_RETRY;
 #endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 			break;
 		}
@@ -3268,8 +3269,9 @@ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
 			link_shadow_page(vcpu, iterator.sptep, sp);
 
 #ifdef CONFIG_KVM_DSAG_MEM_SIMULATION
-            if (unlikely(dsag_mem_simulation(vcpu->kvm, pfn, gfn, iterator.sptep, iterator.level)))
-                return RET_PF_RETRY;
+            if (vcpu->kvm->dsag_local_mem.dsag_enable)
+                if (unlikely(dsag_mem_simulation(vcpu->kvm, pfn, gfn, iterator.sptep, iterator.level)))
+                    return RET_PF_RETRY;
 #endif  // CONFIG_KVM_DSAG_MEM_SIMULATION
 		}
 	}

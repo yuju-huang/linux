@@ -436,9 +436,9 @@ void dsag_sim_init(struct kvm *kvm, int local_mem_size, int network_delay)
     struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
     const unsigned long size_in_byte = local_mem_size * MB;
 
-    // TODO: Only initialize once. Here is simply a workaround.
-    if (dsag_mem->swapper_thread) return;
+    if (dsag_mem->dsag_enable) return;
 
+    dsag_mem->dsag_enable = true;
     hash_init(dsag_mem->local_mem_list);
     dsag_mem->num_total_pages = size_in_byte / PAGE_SIZE;
     dsag_mem->num_free_pages = dsag_mem->num_total_pages;

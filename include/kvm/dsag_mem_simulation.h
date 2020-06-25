@@ -14,6 +14,7 @@
 void dsag_sim_init(struct kvm *kvm, int local_mem_size, int network_delay);
 
 struct dsag_local_mem_t {
+    bool dsag_enable;
     // Memory info
     DECLARE_HASHTABLE(local_mem_list, DSAG_MEM_HASH_BITS);                        
     uint32_t num_total_pages;
