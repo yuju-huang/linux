@@ -20,7 +20,7 @@
 #define RET_FAIL -1
 
 #define LOW_MEM_THRESHOLD 10
-#define FREE_POOL_WATERMARK 10000
+#define FREE_POOL_WATERMARK 1000
 
 static void putback_lru_page(struct page *page)
 {
@@ -30,6 +30,11 @@ static void putback_lru_page(struct page *page)
 
 static inline bool valid_to_swap_out(struct dsag_mem_node *node)
 {
+    // The reclaim API cannot reclaim a page with page ref count >= 3.
+    struct page* page = pfn_to_page(node->pfn);
+    BUG_ON(!page);
+    if (page_ref_count(page) >= 3) return false;
+
     // Only swap the page whose level is 1.
     return (node && node->sptep &&
             (node->mem_type == LOCAL_MEM) && (node->pfn != KVM_PFN_NOSLOT) &&
@@ -87,181 +92,6 @@ static struct dsag_mem_node* find_victim(const struct dsag_local_mem_t* dsag_mem
     return victim_node;
 }
 
-#if 1
-static int dsag_swap_out_local_page(void *data)
-{
-    struct kvm* kvm = (struct kvm*)data;
-    struct dsag_mem_node *victim;
-    unsigned long flags;
-    struct page* page;
-    struct zone* zone;
-    struct list_head* pos;
-    struct dsag_local_mem_t* dsag_mem = &kvm->dsag_local_mem;
-    unsigned long nr_reclaimed = 0;
-    unsigned long num_under_reclaim = 0;
-    uint32_t num_free_pages = 0;
-    uint32_t num_swap_out = 0;
-    uint32_t num_victim = 0;
-    enum zone_type zone_id;
-    enum lru_list lru;
-    size_t i;
-
-    while (1) {
-        spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
-        num_free_pages = dsag_mem->num_free_pages;
-        spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
-
-        if (num_free_pages >= FREE_POOL_WATERMARK) {
-            // sleep
-            set_current_state(TASK_INTERRUPTIBLE);
-            schedule();
-            set_current_state(TASK_RUNNING);
-            continue;
-        } else {
-            spin_lock_irqsave(&dsag_mem->reclaim_list_lock, flags);
-            num_under_reclaim = dsag_mem->num_under_reclaim;
-            spin_unlock_irqrestore(&dsag_mem->reclaim_list_lock, flags);
-
-            num_swap_out = FREE_POOL_WATERMARK - num_free_pages;
-            num_victim = (num_under_reclaim > num_swap_out) ? 0 : (num_swap_out - num_under_reclaim);
-            BUG_ON(num_swap_out < 0);
-            printk("%s1: num_free_pages=%d, num_swap_out=%d, num_under_reclaim=%d, num_victim=%d\n", __func__, num_free_pages, num_swap_out, num_under_reclaim, num_victim);
-            dsag_printk(KERN_DEBUG, "%s: num_swap_out=%d, num_free_pages=%d\n", __func__, num_swap_out, num_free_pages);
-
-            // Find victims.
-            LIST_HEAD(page_list);
-            size_t num_active_anon = 0;
-            size_t num_inactive_anon = 0;
-            size_t num_active_file = 0;
-            size_t num_inactive_file = 0;
-            for (i = 0; i < num_victim; ++i) {
-                victim = find_victim(dsag_mem);
-                if (victim && victim->sptep) {
-                    page = pfn_to_page(victim->pfn);
-                    BUG_ON(!page);
-                    
-                    printk("%s1: i=%d, victim page=0x%llx,  Active=%d, Referenced=%d, LRU=%d\n", __func__, i, page, PageActive(page), PageReferenced(page), PageLRU(page));
-                    // TODO: Seems cause some issue, need to check where the page will be if LRU is clear.
-                    if (!PageLRU(page)) {
-                        --i;
-                        continue;
-                    }
-
-                    lru = page_lru_type(page);
-                    switch (lru) {
-                        case LRU_ACTIVE_ANON: ++num_active_anon; break;
-                        case LRU_INACTIVE_ANON: ++num_inactive_anon; break;
-                        case LRU_ACTIVE_FILE: ++num_active_file; break;
-                        case LRU_INACTIVE_FILE: ++num_inactive_file; break;
-                        default: BUG();
-                    }
-
-                    // Remove page from LRU list.
-                    if (list_empty(&page->lru))
-                        list_add_tail(&page->lru, &page_list);
-                    else
-                        list_move_tail(&page->lru, &page_list);
-
-                    // If the page is active, clear it since the reclaim_pages only accept inactive pages.
-                    ClearPageLRU(page);
-                    ClearPageActive(page);
-                    ClearPageReferenced(page);
-                    // TODO: dig more into shrink_active_list for calling get_page.
-                    get_page(page);
-
-                    // TODO: remove if we can make sure all are same.
-                    zone = page_zone(page);
-                    zone_id = page_zonenum(page);
-                    printk("%s2: i=%d, victim page=0x%llx,  Active=%d, Referenced=%d, LRU=%d, zone=0x%llx, zone_id=%d, lru=%d\n", __func__, i, page, PageActive(page), PageReferenced(page), PageLRU(page), zone, zone_id, lru); // lru is most 1 (ACTIVE_ANON), a few 0 (INACTIVE_ANON)
-
-                    // Ready to swap out.
-                    victim->mem_type = REMOTE_MEM;
-                } else {
-                    break;
-                }
-            }
-
-            if ((num_victim != 0) && (i == 0)) {
-                dsag_printk(KERN_ERR, "Error: no pte found to be swapped out\n");
-                continue;
-            }
-
-            // TODO: remove, debug
-            int j = 0;
-            printk("Dump reclaim_list\n");
-            list_for_each_entry(page, &dsag_mem->reclaim_list, lru) {
-                printk("j=%d, page=0x%llx, Active=%d, Referenced=%d, LRU=%d\n", j++, page, PageActive(page), PageReferenced(page), PageLRU(page));
-            }
-
-            j = 0;
-            printk("Dump page_list\n");
-            list_for_each_entry(page, &page_list, lru) {
-                printk("j=%d, page=0x%llx, Active=%d, Referenced=%d, LRU=%d\n", j++, page, PageActive(page), PageReferenced(page), PageLRU(page));
-            }
-
-            // Merge page_list to the list that has pages under reclaiming.
-            // TODO: Need lock if there is only one swapper thread?
-            spin_lock_irqsave(&dsag_mem->reclaim_list_lock, flags);
-            // Should use list_splice_tail but the lru_to_page used in shrink_page_list do reverse iteration.
-            list_splice(&page_list, &dsag_mem->reclaim_list);
-            spin_unlock_irqrestore(&dsag_mem->reclaim_list_lock, flags);
-
-            j = 0;
-            printk("Dump reclaim_list after splice\n");
-            list_for_each_entry(page, &dsag_mem->reclaim_list, lru) {
-                printk("j=%d, page=0x%llx, Active=%d, Referenced=%d, LRU=%d\n", j++, page, PageActive(page), PageReferenced(page), PageLRU(page));
-            }
-
-            // Update lru size.
-            // TODO: Need to make sure all pages are in the same zone.
-            //       According to current log, they are always in same zone.
-            BUG_ON(list_empty(&dsag_mem->reclaim_list));
-            page = lru_to_page(&dsag_mem->reclaim_list);
-            BUG_ON(!page);
-            zone = page_zone(page);
-            BUG_ON(!zone);
-            printk("%s: page=0x%llx, zone=0x%llx\n", __func__, page, zone);
-            BUG_ON(!zone->zone_pgdat);
-            zone_id = page_zonenum(page);
-            update_lru_size(zone->zone_pgdat, LRU_ACTIVE_ANON , zone_id, -num_active_anon);
-            update_lru_size(zone->zone_pgdat, LRU_INACTIVE_ANON, zone_id, -num_inactive_anon);
-            update_lru_size(zone->zone_pgdat, LRU_ACTIVE_FILE, zone_id, -num_active_file);
-            update_lru_size(zone->zone_pgdat, LRU_INACTIVE_FILE, zone_id, -num_inactive_file);
-
-            // Update num_under_reclaim.
-            // TODO: Need lock if there is only one swapper thread?
-            spin_lock_irqsave(&dsag_mem->reclaim_list_lock, flags);
-#if 0
-            list_for_each(pos, &dsag_mem->reclaim_list) {
-                page = list_entry(pos, struct page, lru);
-                ClearPageActive(page);
-                ClearPageReferenced(page);
-                ClearPageLRU(page); 
-            }
-#endif
-            dsag_mem->num_under_reclaim += i;
-            num_under_reclaim = dsag_mem->num_under_reclaim;
-            spin_unlock_irqrestore(&dsag_mem->reclaim_list_lock, flags);
-
-            printk("%s2: num_free_pages=%d, num_swap_out=%d, num_under_reclaim=%d, num_victim=%d\n", __func__, num_free_pages, num_swap_out, num_under_reclaim, num_victim);
-            nr_reclaimed = reclaim_pages(&dsag_mem->reclaim_list, num_under_reclaim);
-            printk("%s: done reclaim_pages, nr_reclaimed=%ld, num_under_reclaim=%ld\n", __func__, nr_reclaimed, dsag_mem->num_under_reclaim);
-
-            // Update num_under_reclaim.
-            spin_lock_irqsave(&dsag_mem->reclaim_list_lock, flags);
-            dsag_mem->num_under_reclaim -= nr_reclaimed;
-            BUG_ON(dsag_mem->num_under_reclaim < 0);
-            spin_unlock_irqrestore(&dsag_mem->reclaim_list_lock, flags);
-
-            // Update num_free_pages.
-            spin_lock_irqsave(&dsag_mem->free_page_lock, flags);
-            dsag_mem->num_free_pages += nr_reclaimed;
-            spin_unlock_irqrestore(&dsag_mem->free_page_lock, flags);
-        }
-    }
-    return 0;
-}
-#else
 static int dsag_swap_out_local_page(void *data)
 {
     struct kvm* kvm = (struct kvm*)data;
@@ -296,7 +126,7 @@ static int dsag_swap_out_local_page(void *data)
             num_swap_out = FREE_POOL_WATERMARK - num_free_pages;
             num_victim = (num_under_reclaim > num_swap_out) ? 0 : (num_swap_out - num_under_reclaim);
             BUG_ON(num_swap_out < 0);
-            printk("%s1: num_free_pages=%d, num_swap_out=%d, num_under_reclaim=%d, num_victim=%d\n", __func__, num_free_pages, num_swap_out, num_under_reclaim, num_victim);
+            dsag_printk(KERN_DEBUG, "%s1: num_free_pages=%d, num_swap_out=%d, num_under_reclaim=%d, num_victim=%d\n", __func__, num_free_pages, num_swap_out, num_under_reclaim, num_victim);
 
             // Find victims.
             LIST_HEAD(page_list);
@@ -310,7 +140,7 @@ static int dsag_swap_out_local_page(void *data)
                     page = pfn_to_page(victim->pfn);
                     BUG_ON(!page);
                     
-                    printk("%s1: i=%d, victim page=%p,  Active=%d, Referenced=%d, LRU=%d\n", __func__, i, page, PageActive(page), PageReferenced(page), PageLRU(page));
+                    dsag_printk(KERN_DEBUG, "%s1: i=%d, victim page=%p,  Active=%d, Referenced=%d, LRU=%d, page_ref_count=%d\n", __func__, i, page, PageActive(page), PageReferenced(page), PageLRU(page), page_ref_count(page));
                     // TODO: Seems cause some issue, need to check where the page will be if LRU is clear.
                     if (!PageLRU(page)) {
                         --i;
@@ -342,6 +172,7 @@ static int dsag_swap_out_local_page(void *data)
                     // TODO: dig more into shrink_active_list for calling get_page.
                     get_page(page);
 
+                    dsag_printk(KERN_DEBUG, "%s1 (after get_page): i=%d, victim page=%p,  Active=%d, Referenced=%d, LRU=%d, page_ref_count=%d\n", __func__, i, page, PageActive(page), PageReferenced(page), PageLRU(page), page_ref_count(page));
                     // Ready to swap out.
                     victim->mem_type = REMOTE_MEM;
                 } else {
@@ -358,22 +189,25 @@ static int dsag_swap_out_local_page(void *data)
             int j = 0;
             printk("Dump page_list\n");
             list_for_each_entry(page, &page_list, lru)
-                printk("%s: j=%d, page=%p,  Active=%d, Referenced=%d, LRU=%d\n", __func__, ++j, page, PageActive(page), PageReferenced(page), PageLRU(page));
+                printk("%s: j=%d, page=%p,  Active=%d, Referenced=%d, LRU=%d, page_ref_count=%d\n", __func__, ++j, page, PageActive(page), PageReferenced(page), PageLRU(page), page_ref_count(page));
 
             j = 0;
             printk("Dump reclaim_list\n");
             list_for_each_entry(page, &dsag_mem->reclaim_list, lru)
-                printk("%s: j=%d, page=%p,  Active=%d, Referenced=%d, LRU=%d\n", __func__, ++j, page, PageActive(page), PageReferenced(page), PageLRU(page));
+                printk("%s: j=%d, page=%p,  Active=%d, Referenced=%d, LRU=%d, page_ref_count=%d\n", __func__, ++j, page, PageActive(page), PageReferenced(page), PageLRU(page), page_ref_count(page));
 */
+
             // Merge page_list to the list that has pages under reclaiming.
             // Should use list_splice_tail but the lru_to_page used in shrink_page_list do reverse iteration.
             list_splice(&page_list, &dsag_mem->reclaim_list);
+
 /*
             j = 0;
             printk("After splice reclaim_list\n");
             list_for_each_entry(page, &dsag_mem->reclaim_list, lru)
-                printk("%s: j=%d, page=%p,  Active=%d, Referenced=%d, LRU=%d\n", __func__, ++j, page, PageActive(page), PageReferenced(page), PageLRU(page));
+                printk("%s: j=%d, page=%p,  Active=%d, Referenced=%d, LRU=%d, page_ref_count=%d\n", __func__, ++j, page, PageActive(page), PageReferenced(page), PageLRU(page), page_ref_count(page));
 */
+
             // Update lru size.
             // TODO: Need to make sure all pages are in the same zone.
             //       According to current log, they are always in same zone.
@@ -396,9 +230,9 @@ static int dsag_swap_out_local_page(void *data)
             // Some pages may be move to active_list.
             unsigned long nr_activated = 0;
             LIST_HEAD(activate_list);
-            printk("%s2: num_free_pages=%d, num_swap_out=%d, num_under_reclaim=%d, num_victim=%d\n", __func__, num_free_pages, num_swap_out, num_under_reclaim, num_victim);
+            dsag_printk(KERN_DEBUG, "%s2: num_free_pages=%d, num_swap_out=%d, num_under_reclaim=%d, num_victim=%d\n", __func__, num_free_pages, num_swap_out, num_under_reclaim, num_victim);
             nr_reclaimed = reclaim_pages(&dsag_mem->reclaim_list, &activate_list, num_swap_out, &nr_activated, /* debug */true);
-            printk("%s: done reclaim_pages, nr_reclaimed=%ld, nr_activated=%ld\n", __func__, nr_reclaimed, nr_activated);
+            dsag_printk(KERN_DEBUG, "%s: done reclaim_pages, nr_reclaimed=%ld, nr_activated=%ld\n", __func__, nr_reclaimed, nr_activated);
 
             // Activate pages in the activate_list.
             if (nr_activated != 0) {
@@ -408,7 +242,6 @@ static int dsag_swap_out_local_page(void *data)
                     BUG_ON(!page);
                     VM_BUG_ON_PAGE(PageLRU(page), page);
                     list_del(&page->lru);
-                    printk("%s: putback activate_list, page=%p\n", __func__, page);
 
                     putback_lru_page(page);
                 }
@@ -426,7 +259,6 @@ static int dsag_swap_out_local_page(void *data)
     }
     return 0;
 }
-#endif
 
 /*
  * External APIs
