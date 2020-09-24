@@ -23,7 +23,7 @@
 #include <linux/kernel.h>
 #include <rdma/ib_verbs.h>
 
-#include "../../include/uapi/fit.h"
+#include "../../include/uapi/lego/fit.h"
 
 #include "fit_internal.h"
 
@@ -34,11 +34,8 @@
  * lead to an early panic.
  */
 static const char *lego_cluster_hostnames[CONFIG_FIT_NR_NODES] = {
-	[0]	=	"wuklab14",
-	[1]	=	"wuklab09",
-	[2]	=	"wuklab12",
-	[3]	=	"wuklab13",
-	[4]	=	"wuklab15",
+	[0]	=	"node0",
+	[1]	=	"node1",
 };
 
 /* Built based on node id */

@@ -88,4 +88,4 @@ obj-$(CONFIG_QRTR)		+= qrtr/
 obj-$(CONFIG_NET_NCSI)		+= ncsi/
 obj-$(CONFIG_XDP_SOCKETS)	+= xdp/
 
-obj-$(CONFIG_KVM_DSAG_MEM_SIMULATION) += lego/
+#obj-$(CONFIG_KVM_DSAG_MEM_SIMULATION) += lego/

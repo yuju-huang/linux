@@ -105,4 +105,9 @@ config KVM_DSAG_MEM_SIMULATION
     ---help---
     Use KVM for simulating disaggregated memory architecture."
 
+config OMNIVISOR
+    bool "OmniVisor"
+    ---help---
+    Enable OmniVisor for running hypervisor on disaggregated architecture.
+
 endif # VIRTUALIZATION

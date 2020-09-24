@@ -7,13 +7,14 @@
  * (at your option) any later version.
  */
 
-#include <lego/net.h>
-#include <lego/slab.h>
-#include <lego/sched.h>
+#include <linux/completion.h>
+#include <linux/net.h>
+#include <linux/profile.h>
+#include <linux/slab.h>
+#include <linux/sched.h>
 #include <rdma/ib_verbs.h>
 #include <lego/fit_ibapi.h>
-#include <lego/completion.h>
-#include <lego/profile.h>
+#include <lego/profile_point.h>
 #include "fit.h"
 #include "fit_internal.h"
 
@@ -42,7 +43,7 @@ static void ibv_add_one(struct ib_device *device)
 	FIT_ctx = kmalloc(sizeof(struct lego_context), GFP_KERNEL);
 	ibapi_dev = device;
 
-	ctx_pd = ib_alloc_pd(device);
+	ctx_pd = ib_alloc_pd(device, 0);
 	if (!ctx_pd) {
 		printk(KERN_ALERT "Couldn't allocate PD\n");
 	}
@@ -50,7 +51,7 @@ static void ibv_add_one(struct ib_device *device)
 	return;
 }
 
-static void ibv_remove_one(struct ib_device *device)
+static void ibv_remove_one(struct ib_device *device, void *client_data)
 {
 	return;
 }
@@ -418,7 +419,7 @@ static void lego_ib_test(void)
 #endif
 }
 
-__initdata DEFINE_COMPLETION(ib_init_done);
+__initdata DECLARE_COMPLETION(ib_init_done);
 
 int lego_ib_init(void *unused)
 {
@@ -439,9 +440,11 @@ int lego_ib_init(void *unused)
 	 */
 	nr_mad = 7;
 	pr_info("Please wait for enough IB MAD (number: %d) ...\n", nr_mad);
+// TODO: Revisit
+/*
 	while (mad_got_one < nr_mad)
 		schedule();
-
+*/
 	ret = ib_register_client(&ibv_client);
 	if (ret) {
 		pr_err("couldn't register IB client\n");
