@@ -34,15 +34,17 @@
  * lead to an early panic.
  */
 static const char *lego_cluster_hostnames[CONFIG_FIT_NR_NODES] = {
-	[0]	=	"node0",
-	[1]	=	"node1",
+	[0]	=	"compute21",
+	[1]	=	"compute22",
 };
 
 /* Built based on node id */
 struct fit_machine_info *lego_cluster[CONFIG_FIT_NR_NODES];
 
 static struct fit_machine_info WUKLAB_CLUSTER[] = {
-[0]	= {	.hostname =	"wuklab00",	.lid =	2,	},
+[0]	= {	.hostname =	"compute21", .lid = 0, },
+[1]	= {	.hostname =	"compute22", .lid = 1, },
+/*
 [1]	= {	.hostname =	"wuklab01",	.lid =	6,	},
 [2]	= {	.hostname =	"wuklab02",	.lid =	8,	},
 [3]	= {	.hostname =	"wuklab03",	.lid =	9,	},
@@ -68,6 +70,7 @@ static struct fit_machine_info WUKLAB_CLUSTER[] = {
 [23]	= {	.hostname =	"wuklab23",	.lid =	30,	},
 [24]	= {	.hostname =	"wuklab24",	.lid =	31,	},
 [25]	= {	.hostname =	"wuklab25",	.lid =	26,	},
+*/
 };
 
 /* Indicate machines that are used by lego */

@@ -263,13 +263,14 @@ static void lego_ib_test(void)
 int fit_state = FIT_MODULE_DOWN;
 EXPORT_SYMBOL(fit_state);
 
-static int __init lego_ib_init(void)
+// static int __init lego_ib_init(void)
+static int lego_ib_init(void)
 {
 	int ret;
 
-	fit_internal_init();
-
 	printk(KERN_CRIT "%s\n", __func__);
+
+	fit_internal_init();
 
 	ret = ib_register_client(&ibv_client);
 	if (ret) {
@@ -279,16 +280,22 @@ static int __init lego_ib_init(void)
 
 	atomic_set(&global_reqid, 0);
 
-	ret = ibapi_establish_conn(1, CONFIG_FIT_LOCAL_ID);
+	ret = ibapi_establish_conn(/* ib_port */1, CONFIG_FIT_LOCAL_ID);
+    if (ret == 0) {
+        printk(KERN_CRIT "ibapi_establish_conn return 0\n"); 
+        return 0;
+    }
 
+/*
 	if (ret == 0)
 		lego_ib_test();
-
+*/
 	fit_state = FIT_MODULE_UP;
 	return 0;
 }
 
-static void __exit lego_ib_cleanup(void)
+// static void __exit lego_ib_cleanup(void)
+static void lego_ib_cleanup(void)
 {
 	fit_state = FIT_MODULE_DOWN;
 

@@ -15,8 +15,8 @@
 #define FIT_MODULE_UP			1
 
 /* Lego cluster config */
-#define CONFIG_FIT_LOCAL_ID		2
-#define CONFIG_FIT_NR_NODES		3
+#define CONFIG_FIT_LOCAL_ID		1
+#define CONFIG_FIT_NR_NODES		2
 #define MAX_NODE			CONFIG_FIT_NR_NODES
 
 /*

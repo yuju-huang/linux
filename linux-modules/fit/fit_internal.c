@@ -165,6 +165,8 @@ static int aligned = false;
 static void align_first_qpn(struct ib_pd *pd, struct ib_qp_init_attr *init_attr)
 {
 	struct ib_qp *qp;
+    // TODO: enable aligned if we truly need it.
+    aligned = true;
 
 	if (aligned)
 		return;
@@ -222,6 +224,7 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 		return NULL;
 	}
 
+    printk(KERN_CRIT "ctx->pd->device->ops->=%p\n", (void*)(ctx->pd->device->ops.get_dma_mr));
 	ctx->proc = ctx->pd->device->ops.get_dma_mr(
         ctx->pd,
         IB_ACCESS_LOCAL_WRITE | IB_ACCESS_REMOTE_WRITE | IB_ACCESS_REMOTE_READ);
@@ -230,6 +233,7 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 		return NULL;
 	}
 	fit_debug("proc lkey %x rkey %x\n", ctx->proc->lkey, ctx->proc->rkey);
+	printk("proc lkey %x rkey %x\n", ctx->proc->lkey, ctx->proc->rkey);
 
 	ctx->send_state = (enum s_state *)kmalloc(num_connections * sizeof(enum s_state), GFP_KERNEL);	
 	ctx->recv_state = (enum r_state *)kmalloc(num_connections * sizeof(enum r_state), GFP_KERNEL);
@@ -464,8 +468,8 @@ retry:
 	{
 		printk(KERN_ALERT "Fail to query port\n");
 	}
-	
-   	if (!ctx->portinfo.lid || ctx->portinfo.state != 4) {
+
+    if (!ctx->portinfo.lid || ctx->portinfo.state != IB_PORT_ACTIVE) {
 		printk(KERN_CRIT "Couldn't get local LID %d state %d\n", ctx->portinfo.lid, ctx->portinfo.state);
 		schedule();
 		goto retry;
@@ -491,7 +495,6 @@ retry:
 
 	printk(KERN_ALERT "I am here before return fit_init_interface\n");
 	return ctx;
-
 }
 
 uintptr_t fit_ib_reg_mr_phys_addr(struct lego_context *ctx, void *addr, size_t length)
@@ -2200,8 +2203,7 @@ struct lego_context *fit_establish_conn(struct ib_device *ib_dev, int ib_port, i
 		printk(KERN_ALERT "%s: ctx %p fail to init_interface \n", __func__, (void *)ctx);
 		return 0;	
 	}
-        
-        Connected_Ctx[temp_ctx_number-1] = ctx;
+    Connected_Ctx[temp_ctx_number-1] = ctx;
 
 	for(i=0;i<MAX_CONNECTION;i++)
 	{
@@ -2255,6 +2257,7 @@ struct lego_context *fit_establish_conn(struct ib_device *ib_dev, int ib_port, i
 		printk(KERN_CRIT "allocated local recv mr for node %d addr %p %p lkey %d rkey %d",
 				i, ctx->local_rdma_recv_rings[i], ret_mr->addr, ret_mr->lkey, ret_mr->rkey);
 	}
+// return NULL; // OK
 	/* array to store rdma ring mr for all remote nodes */
 	ctx->remote_rdma_ring_mrs = (struct fit_ibv_mr *)kmalloc(MAX_NODE * sizeof(struct fit_ibv_mr), GFP_KERNEL);
 	ctx->remote_rdma_ring_mrs_offset = (int *)kzalloc(MAX_NODE * sizeof(int), GFP_KERNEL);
@@ -2311,6 +2314,7 @@ struct lego_context *fit_establish_conn(struct ib_device *ib_dev, int ib_port, i
 	printk(KERN_CRIT "%s all connections completed\n", __func__);
 	//schedule();
 
+#if 0
 	for (i = 0; i < 30000; i++) {
 		udelay(1000);
 	}
@@ -2324,10 +2328,11 @@ struct lego_context *fit_establish_conn(struct ib_device *ib_dev, int ib_port, i
 
 	//schedule();
 
+    printk("num_recvd_rdma_ring_mrs=%d, ctx->num_node=%d\n", num_recvd_rdma_ring_mrs, ctx->num_node);
 	while (num_recvd_rdma_ring_mrs < ctx->num_node - 1)
 		//cpu_relax();
 		schedule();
-
+#endif
 	printk(KERN_ALERT "%s: return before establish connection with NODE_ID: %d\n", __func__, ctx->node_id);
 
 	return ctx;
@@ -2341,8 +2346,8 @@ int fit_cleanup_module(void)
 
 int fit_internal_init(void)
 {
-        Connected_Ctx = (struct lego_context **)kmalloc(sizeof(struct lego_context*)*MAX_FIT_NUM, GFP_KERNEL);
-        atomic_set(&Connected_FIT_Num, 0);
+    Connected_Ctx = (struct lego_context **)kmalloc(sizeof(struct lego_context*)*MAX_FIT_NUM, GFP_KERNEL);
+    atomic_set(&Connected_FIT_Num, 0);
 	printk(KERN_CRIT "insmod fit_internal module\n");
 	return 0;
 }
