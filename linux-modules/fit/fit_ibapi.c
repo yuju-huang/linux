@@ -40,12 +40,30 @@ int curr_node;
 struct ib_device *ibapi_dev;
 struct ib_pd *ctx_pd;
 
+static bool check_port_status(struct ib_device *dev)
+{
+    const int start_port = rdma_start_port(dev);
+    const int end_port = rdma_end_port(dev);
+    struct ib_port_attr port_attr;
+    int port;
+
+    for (port = start_port; port <= end_port; ++port) {
+        if (ib_query_port(dev, port, &port_attr) < 0) continue;
+        if ((port_attr.lid) != 0 && (port_attr.state == IB_PORT_ACTIVE))
+            return true;
+    }
+    return false;
+}
+
 static void ibv_add_one(struct ib_device *device)
 {
-	FIT_ctx = (struct lego_context *)kmalloc(sizeof(struct lego_context), GFP_KERNEL);
+    // TODO: the global variable here is not good.
+    if (ibapi_dev != NULL) return;
+
+    if (!check_port_status(device)) return;
+
 	ibapi_dev = device;
 	
-	printk(KERN_CRIT "%s\n", __func__);
 	if (device == NULL)
 		printk(KERN_CRIT "%s device NULL\n", __func__);
 
