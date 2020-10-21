@@ -404,7 +404,7 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 	 * In case the QPN differs from the wuklab_cluster table
 	 * May happen in VM environment.
 	 */
-	check_current_first_qpn(ctx->qp[0]->qp_num);
+	// check_current_first_qpn(ctx->qp[0]->qp_num);
 
 	//Do IMM local ring setup (imm-send-reply)
 	ctx->reply_ready_indicators = (void **)kmalloc(sizeof(void*)*IMM_NUM_OF_SEMAPHORE, GFP_KERNEL);
