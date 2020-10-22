@@ -95,21 +95,34 @@ unsigned int get_node_first_qpn(unsigned int nid)
  * This come after arrays are initialized
  * We check if this runtime's QPN matches our wuklab_cluster table
  */
-void check_current_first_qpn(unsigned int qpn)
+bool check_current_first_qpn(struct lego_context* ctx,
+                             unsigned int num_connections)
 {
+    unsigned int i;
 	unsigned int self;
+    unsigned int expected;
 
-	self = get_node_first_qpn(CONFIG_FIT_LOCAL_ID);
-	if (self == qpn)
-		return;
+    for (i = 0; i < num_connections; ++i) {
+        if (ctx->qp[i] != NULL) break;
+    }
+
+    expected = i + get_node_first_qpn(CONFIG_FIT_LOCAL_ID);
+    if (ctx->qp[i] == NULL) {
+        pr_err("check_current_first_qpn i=%d, expected=%d\n", i, expected);
+        return false;
+    }
+
+    if (ctx->qp[i]->qp_num == expected)
+        return true;
 
 	pr_err("******\n");
 	pr_err("******\n");
 	pr_err("******  ERROR: QPN Changed!\n");
 	pr_err("******  Other Lego machines will fail to connect.\n");
-	pr_err("******  (Previous: %d New: %d)\n", self, qpn);
+	pr_err("******  (Create qpn: %d expected; %d)\n", ctx->qp[i]->qp_num, expected);
 	pr_err("******\n");
 	pr_err("******\n");
+    return false;
 }
 
 /*

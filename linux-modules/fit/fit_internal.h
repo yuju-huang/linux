@@ -63,7 +63,8 @@ void init_global_lid_qpn(void);
 void print_gloabl_lid(void);
 unsigned int get_node_global_lid(unsigned int nid);
 unsigned int get_node_first_qpn(unsigned int nid);
-void check_current_first_qpn(unsigned int qpn);
+bool check_current_first_qpn(struct lego_context* ctx,
+                             unsigned int num_connections);
 
 extern unsigned int global_lid[];
 extern unsigned int first_qpn[];

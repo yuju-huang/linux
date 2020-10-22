@@ -333,8 +333,10 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 #else
 		rem_node_id = i/NUM_PARALLEL_CONNECTION;
 		printk(KERN_CRIT "%s mynodeid %d i %d %d\n", __func__, ctx->node_id, i, rem_node_id);
-		if (rem_node_id == ctx->node_id)
+		if (rem_node_id == ctx->node_id) {
+            ctx->qp[i] = NULL;
 			continue;
+        }
 #endif
 		ctx->send_state[i] = SS_INIT;
 		ctx->recv_state[i] = RS_INIT;
@@ -404,7 +406,8 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 	 * In case the QPN differs from the wuklab_cluster table
 	 * May happen in VM environment.
 	 */
-	// check_current_first_qpn(ctx->qp[0]->qp_num);
+	if (check_current_first_qpn(ctx, num_connections) == false)
+        return NULL;
 
 	//Do IMM local ring setup (imm-send-reply)
 	ctx->reply_ready_indicators = (void **)kmalloc(sizeof(void*)*IMM_NUM_OF_SEMAPHORE, GFP_KERNEL);
