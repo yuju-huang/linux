@@ -1,7 +1,6 @@
 obj-m := rc-pingpong.o
 
 rc-pingpong-y := rc_pingpong.o
-rc-pingpong-y += pingpong.o
 
 cflags += -g
 EXTRA_CFLAGS += -g
