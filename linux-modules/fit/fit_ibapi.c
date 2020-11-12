@@ -84,7 +84,6 @@ inline int ibapi_send_reply_imm(int target_node, void *addr, int size, void *ret
 {
 	struct lego_context *ctx = FIT_ctx;
 	int ret;
-	//printk("Calling ibapi_send_reply_imm\n");
 	ret = fit_send_reply_with_rdma_write_with_imm(ctx, target_node, addr, size, ret_addr, max_ret_size, 0, if_use_ret_phys_addr);
 	return ret;
 }
@@ -229,7 +228,7 @@ int ibapi_establish_conn(int ib_port, int mynodeid)
 	if(!ctx)
 	{
 		printk(KERN_ALERT "%s: ctx %p fail to init_interface \n", __func__, (void *)ctx);
-		return 0;	
+		return -1;
 	}
 
 	FIT_ctx = ctx;
@@ -245,14 +244,14 @@ static struct ib_client ibv_client = {
 	.remove = ibv_remove_one
 };
 
-//#define FIT_TESTING
 static void lego_ib_test(void)
 {
-#ifdef FIT_TESTING
 	int ret, i;
 	char *buf = kmalloc(4096, GFP_KERNEL);
 	char *retb = kmalloc(4096, GFP_KERNEL);
 	uintptr_t desc;
+
+    printk(KERN_CRIT "lego_ib_test\n");
 	if (CONFIG_FIT_LOCAL_ID == 0) {
 		for (i = 0; i < 10; i++) {
 			ret = ibapi_receive_message(0, buf, 4096, &desc);
@@ -271,10 +270,81 @@ static void lego_ib_test(void)
 		buf[1] = 'b';
 		buf[2] = '\0';
 		for (i = 0; i < 10; i++) {
-			ret = ibapi_send_reply_imm(1, buf, 4096, retb, 4096, 0);
+			ret = ibapi_send_reply_imm(0, buf, 4096, retb, 4096, 0);
 			pr_info("%s(%2d) retbuffer: %s\n", __func__, i, retb);
 		}
 	}
+}
+
+static int my_test(void)
+{
+    int i;
+    const size_t page_size = 4096;
+    const size_t size = 4096;
+    const int connection_id = 0;
+	char *buf = kmalloc(size, GFP_KERNEL);
+    if (!buf) {
+        printk(KERN_CRIT "alloc buf fails\n");
+        return 1;
+    }
+	for (i = 0; i < size; i += page_size)
+		buf[i] = i / page_size % sizeof(char);
+
+    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_FROM_DEVICE);
+	struct ib_sge list = {
+		.addr	= dma,
+		.length = size,
+		.lkey	= FIT_ctx->pd->local_dma_lkey,
+	};
+	struct ib_send_wr wr = {
+		.wr_id	    = 2,
+		.sg_list    = &list,
+		.num_sge    = 1,
+		.opcode     = IB_WR_SEND,
+		.send_flags = IB_SEND_SIGNALED,
+	};
+	struct ib_send_wr *bad_wr;
+
+    printk(KERN_DEBUG "calling ib_post_send\n");
+	return ib_post_send(FIT_ctx->qp[connection_id], &wr, (const struct ib_send_wr **)&bad_wr);
+
+#if 0
+    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_FROM_DEVICE);
+
+	struct ib_sge sg;
+    memset(&sg, 0, sizeof(sg));
+    sg.addr	= dma;
+	sg.length = size;
+	sg.lkey	= FIT_ctx->pd->local_dma_lkey;
+
+	struct ib_send_wr wr;
+    memset(&wr, 0, sizeof(wr));
+    wr.wr_id	  = 2;
+	wr.sg_list    = &sg;
+	wr.num_sge    = 1;
+	wr.opcode     = IB_WR_SEND;
+	wr.send_flags = IB_SEND_SIGNALED;
+
+    int myflag;
+    uint16_t pkey;
+    struct ib_qp_attr attr2;
+    struct ib_qp_init_attr init_attr;
+    struct rdma_ah_attr* ah;
+
+    myflag = IB_QP_STATE | IB_QP_CUR_STATE | IB_QP_EN_SQD_ASYNC_NOTIFY | IB_QP_ACCESS_FLAGS | IB_QP_PKEY_INDEX |
+             IB_QP_PORT | IB_QP_QKEY | IB_QP_AV | IB_QP_PATH_MTU | IB_QP_TIMEOUT |
+             IB_QP_RETRY_CNT | IB_QP_RNR_RETRY | IB_QP_RQ_PSN | IB_QP_MAX_QP_RD_ATOMIC |
+             IB_QP_ALT_PATH | IB_QP_MIN_RNR_TIMER | IB_QP_SQ_PSN | IB_QP_MAX_DEST_RD_ATOMIC |
+             IB_QP_MAX_DEST_RD_ATOMIC | IB_QP_CAP | IB_QP_DEST_QPN;
+    ib_query_qp(FIT_ctx->qp[connection_id], &attr2, myflag, &init_attr);
+    ib_query_pkey(ibapi_dev, attr2.port_num, attr2.pkey_index, &pkey);
+    ah = &attr2.ah_attr;
+                                                            
+    printk(KERN_CRIT "qpn=%d, dest_qp_num=%d, qp_state=%d, cur_state=%d, en_sqd_async_notify=%d, access_flags=%d, pkey_idx=%d, pkey=%d, port=%d, qkey=%d, mtu=%d, timeout=%d, retry_cnt=%d, rnr_retry=%d, rq_psn=%d, max_qp_rd_atomic=%d, min_rnr_timer=%d, sq_psn=%d, max_dest_rd_atomic=%d, path_mig_state=%d\n", FIT_ctx->qp[connection_id]->qp_num, attr2.dest_qp_num, attr2.qp_state, attr2.cur_qp_state, attr2.en_sqd_async_notify, attr2.qp_access_flags, attr2.pkey_index, pkey, attr2.port_num, attr2.qkey, attr2.path_mtu, attr2.timeout, attr2.retry_cnt, attr2.rnr_retry, attr2.rq_psn, attr2.max_rd_atomic, attr2.sq_psn, attr2.max_dest_rd_atomic, attr2.path_mig_state);
+    printk(KERN_CRIT "sl=%d, static_rate=%d, port_num=%d, ah_flags=%d, ah_type=%d, dlid=%d, src_path_bits=%d\n", ah->sl, ah->static_rate, ah->port_num, ah->ah_flags, ah->type, ah->ib.dlid, ah->ib.src_path_bits);
+    printk(KERN_CRIT "max_send_wr=%d, max_recv_wr=%d, max_send_sge=%d, max_recv_sge=%d, max_inline_data=%d, max_rdma_ctxs=%d, sq_sig_type=%d, qp_type=%d, create_flags=%d, port_num=%d, source_qpn=%d\n", init_attr.cap.max_send_wr, init_attr.cap.max_recv_wr, init_attr.cap.max_send_sge, init_attr.cap.max_recv_sge, init_attr.cap.max_inline_data, init_attr.cap.max_rdma_ctxs, init_attr.sq_sig_type, init_attr.qp_type, init_attr.create_flags, init_attr.port_num, init_attr.source_qpn);
+
+	return ib_post_send(FIT_ctx->qp[connection_id], &wr, NULL);
 #endif
 }
 
@@ -299,15 +369,15 @@ static int lego_ib_init(void)
 	atomic_set(&global_reqid, 0);
 
 	ret = ibapi_establish_conn(/* ib_port */1, CONFIG_FIT_LOCAL_ID);
-    if (ret == 0) {
-        printk(KERN_CRIT "ibapi_establish_conn return 0\n"); 
-        return 0;
+    if (ret < 0) {
+        printk(KERN_CRIT "ibapi_establish_conn return %d\n", ret); 
+        return -1;
     }
 
-/*
-	if (ret == 0)
-		lego_ib_test();
-*/
+//    lego_ib_test();
+    ret = my_test();
+    printk(KERN_CRIT "my_test return %d\n");
+
 	fit_state = FIT_MODULE_UP;
 	return 0;
 }

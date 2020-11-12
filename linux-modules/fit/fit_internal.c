@@ -93,6 +93,18 @@ DEFINE_HASHTABLE(LOCK_QUEUE_HASHTABLE, HASH_TABLE_SIZE_BIT);
 spinlock_t LOCK_QUEUE_HASHTABLE_LOCK[1<<HASH_TABLE_SIZE_BIT];
 #endif
 
+static int get_global_qpn(int nodeid, int conn)
+{
+	int ret;
+	int remote_first_qpn;
+
+	remote_first_qpn = get_node_first_qpn(nodeid);
+	BUG_ON(!remote_first_qpn);
+
+    ret = nodeid * NUM_PARALLEL_CONNECTION + conn;
+    return ret + remote_first_qpn;
+}
+
 long long int Internal_Stat_Sum=0;
 int Internal_Stat_Count=0;
 
@@ -139,9 +151,6 @@ int init_socket_over_ib(struct lego_context *ctx, int port, int rx_depth, int i)
 		.pkey_index = 0,
 		.port_num = port,
 		.qp_access_flags = IB_ACCESS_REMOTE_WRITE|IB_ACCESS_REMOTE_READ|IB_ACCESS_LOCAL_WRITE|IB_ACCESS_REMOTE_ATOMIC,
-		.path_mtu = IB_MTU_2048,
-		.retry_cnt = 7,
-		.rnr_retry = 7
 	};
 	if(ib_modify_qp(ctx->sock_qp[i], &attr1,
 				IB_QP_STATE		|
@@ -162,11 +171,10 @@ int init_socket_over_ib(struct lego_context *ctx, int port, int rx_depth, int i)
 
 int FIRST_QPN = CONFIG_FIT_FIRST_QPN;
 static int aligned = false;
-static void align_first_qpn(struct ib_pd *pd, struct ib_qp_init_attr *init_attr)
+static void align_first_qpn(int nodeid, struct ib_pd *pd, struct ib_qp_init_attr *init_attr)
 {
 	struct ib_qp *qp;
-    // TODO: enable aligned if we truly need it.
-    aligned = true;
+    int target;
 
 	if (aligned)
 		return;
@@ -178,14 +186,20 @@ next:
 
 	pr_debug("%s(): created QPN: %d\n", __func__, qp->qp_num);
 
-	if (qp->qp_num == (FIRST_QPN - 1)) {
+    target = get_global_qpn(nodeid, 0) - 1;
+	printk(KERN_CRIT "%s(): created QPN: %d, target=%d\n", __func__, qp->qp_num, target);
+
+	if (qp->qp_num == target) {
 		aligned = true;
 		return;
-	} else if (qp->qp_num > (FIRST_QPN - 1))
-		panic("Initial alloc qpn: %d. align qpn: %d",
-			qp->qp_num, FIRST_QPN);
-	else
+	} else if (qp->qp_num > target) {
+		printk(KERN_CRIT "Initial alloc qpn: %d. align qpn: %d. Align fail!", qp->qp_num, FIRST_QPN);
+		// panic("Initial alloc qpn: %d. align qpn: %d", qp->qp_num, FIRST_QPN);
+        return;
+    } else {
+        ib_destroy_qp(qp);
 		goto next;
+    }
 }
 
 struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_device *ib_dev, int mynodeid)
@@ -244,6 +258,7 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 	memset(ctx->num_alive_connection, 0, ctx->num_node*sizeof(atomic_t));
 	for(i=0;i<ctx->num_node;i++)
 		atomic_set(&ctx->num_alive_connection[i], 0);
+    atomic_set(&ctx->num_alive_connection[mynodeid], NUM_PARALLEL_CONNECTION);
 
 	ctx->recv_num = (int *)kmalloc(ctx->num_connections*sizeof(int), GFP_KERNEL);
 	memset(ctx->recv_num, 0, ctx->num_connections*sizeof(int));
@@ -365,7 +380,7 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 			.sq_sig_type = IB_SIGNAL_REQ_WR
 		};
 
-		align_first_qpn(ctx->pd, &init_attr);
+		align_first_qpn(ctx->node_id, ctx->pd, &init_attr);
 		ctx->qp[i] = ib_create_qp(ctx->pd, &init_attr);
 		if(!ctx->qp[i])
 		{
@@ -385,9 +400,6 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 			.pkey_index = 0,
 			.port_num = port,
 			.qp_access_flags = IB_ACCESS_REMOTE_WRITE|IB_ACCESS_REMOTE_READ|IB_ACCESS_LOCAL_WRITE|IB_ACCESS_REMOTE_ATOMIC,
-			.path_mtu = IB_MTU_2048,
-			.retry_cnt = 7,
-			.rnr_retry = 7
 		};
 		if(ib_modify_qp(ctx->qp[i], &attr1,
 					IB_QP_STATE		|
@@ -406,9 +418,8 @@ struct lego_context *fit_init_ctx(int size, int rx_depth, int port, struct ib_de
 	 * In case the QPN differs from the wuklab_cluster table
 	 * May happen in VM environment.
 	 */
-	if (check_current_first_qpn(ctx, num_connections) == false)
-        return NULL;
-
+	check_current_first_qpn(ctx, num_connections);
+    
 	//Do IMM local ring setup (imm-send-reply)
 	ctx->reply_ready_indicators = (void **)kmalloc(sizeof(void*)*IMM_NUM_OF_SEMAPHORE, GFP_KERNEL);
 	ctx->reply_ready_indicators_bitmap = kzalloc(sizeof(unsigned long) * BITS_TO_LONGS(IMM_NUM_OF_SEMAPHORE), GFP_KERNEL);
@@ -770,6 +781,12 @@ int connect_sock_qp(struct lego_context *ctx, int connection_id, int port, enum 
 
 int fit_connect_ctx(struct lego_context *ctx, int connection_id, int port, enum ib_mtu mtu, int sl, int destlid, int destqpn)
 {
+    unsigned myflag;
+    uint16_t pkey;
+    struct ib_qp_attr attr2;
+    struct ib_qp_init_attr init_attr;
+    struct rdma_ah_attr* ah;
+
     struct rdma_ah_attr* ah_attr;
     struct ib_device* ib_dev = (struct ib_device*)ctx->context;
 	struct ib_qp_attr attr = {
@@ -820,32 +837,18 @@ int fit_connect_ctx(struct lego_context *ctx, int connection_id, int port, enum 
 		return 2;
 	}
 
-	printk(KERN_CRIT "%s connected conn %d destqpn %d\n", __func__, connection_id, destqpn);
+    myflag = IB_QP_DEST_QPN | IB_QP_PKEY_INDEX | IB_QP_STATE | IB_QP_CUR_STATE | 
+             IB_QP_QKEY | IB_QP_AV | IB_QP_RQ_PSN | IB_QP_SQ_PSN |               
+             IB_QP_ACCESS_FLAGS | IB_QP_PATH_MTU | IB_QP_MAX_QP_RD_ATOMIC | IB_QP_MAX_DEST_RD_ATOMIC;
+    ib_query_qp(ctx->qp[connection_id], &attr2, myflag, &init_attr);
+    ib_query_pkey(ib_dev, attr2.port_num, attr2.pkey_index, &pkey);
+    ah = &attr2.ah_attr;
+                                                            
+    printk(KERN_CRIT "qpn=%d, dest_qp_num=%d, qp_state=%d, cur_state=%d, pkey_idx=%d, pkey=%d, qkey=%d, access_flag=%d, mtu=%d, rq_psn=%d, sq_psn=%d, max_rd_atomic=%d, dest_rd_atomic=%d, port_num=%d\n", ctx->qp[connection_id]->qp_num, attr2.dest_qp_num, attr2.qp_state, attr2.cur_qp_state, attr2.pkey_index, pkey, attr2.qkey, attr2.qp_access_flags, attr2.path_mtu, attr2.rq_psn, attr2.sq_psn, attr2.max_rd_atomic, attr2.max_dest_rd_atomic, attr2.port_num);
+    printk(KERN_CRIT "dlid=%d, src_path_bits=%d\n", ah->ib.dlid, ah->ib.src_path_bits);
+
+    printk(KERN_CRIT "%s connected conn %d qpn=%d, destqpn=%d\n", __func__, connection_id, ctx->qp[connection_id]->qp_num, destqpn);
 	return 0;
-}
-
-int get_global_qpn(int mynodeid, int remnodeid, int conn)
-{
-	int ret;
-	int remote_first_qpn;
-
-	remote_first_qpn = get_node_first_qpn(remnodeid);
-	BUG_ON(!remote_first_qpn);
-
-#ifdef CONFIG_SOCKET_O_IB
-	/* +1 for sock_qp */
-	if (remnodeid > mynodeid)
-		ret = mynodeid * (NUM_PARALLEL_CONNECTION+1) + conn;
-	else
-		ret = (mynodeid - 1) * (NUM_PARALLEL_CONNECTION+1) + conn;
-#else
-	if (remnodeid > mynodeid)
-		ret = mynodeid * (NUM_PARALLEL_CONNECTION) + conn;
-	else
-		ret = (mynodeid - 1) * (NUM_PARALLEL_CONNECTION) + conn;
-#endif
-
-	return ret + remote_first_qpn;
 }
 
 int init_global_connt = 0;
@@ -892,7 +895,7 @@ int fit_add_newnode(struct lego_context *ctx, int rem_node_id, int mynodeid)
 #else
 		cur_connection = (rem_node_id * ctx->num_parallel_connection) + atomic_read(&ctx->num_alive_connection[rem_node_id]);
 #endif
-		global_qpn = get_global_qpn(ctx->node_id, rem_node_id, i);
+		global_qpn = get_global_qpn(rem_node_id, i);
 		printk(KERN_ALERT "%s: cur connection %d mynode %d remnode %d remotelid %d remoteqpn %d\n", 
 				__func__, cur_connection, ctx->node_id, rem_node_id, global_lid[rem_node_id], global_qpn);
 retry:
@@ -933,6 +936,7 @@ retry:
 	pr_info("***  Successfully built QP for node %2d [LID: %d QPN: %d]\n",
 		rem_node_id, get_node_global_lid(rem_node_id),
 		get_node_first_qpn(rem_node_id));
+    pr_info("num_alive_connection[0]=%d, num_alive_connection[1]=%d\n", atomic_read(&ctx->num_alive_connection[0]), atomic_read(&ctx->num_alive_connection[1]));
 
 	return 0;
 }
@@ -1062,8 +1066,15 @@ int fit_send_message_with_rdma_write_with_imm_request(struct lego_context *ctx, 
 	int poll_status = SEND_REPLY_WAIT;
 	int flag=0;
 
-	//printk(KERN_CRIT "%s conn %d rkey %d mraddr %lx addr %p size %d offset %d imm %d\n", 
-	//		__func__, connection_id, input_mr_rkey, input_mr_addr, addr, size, offset, imm);
+    unsigned myflag;
+    uint16_t pkey;
+    struct ib_qp_attr attr;
+    struct ib_qp_init_attr init_attr;
+    struct rdma_ah_attr* ah;
+    struct ib_device *ibd = (struct ib_device *)ctx->context;
+ 
+	printk(KERN_CRIT "%s conn %d rkey %d mraddr %lx addr %p size %d offset %d imm %d\n", 
+			__func__, connection_id, input_mr_rkey, input_mr_addr, addr, size, offset, imm);
 retry_send_imm_request:
 	memset(&wr, 0, sizeof(struct ib_send_wr));
 	memset(&sge, 0, sizeof(struct ib_sge));
@@ -1073,14 +1084,14 @@ retry_send_imm_request:
 	wr.remote_addr = (uintptr_t)(input_mr_addr + offset);
 	wr.rkey = input_mr_rkey;
 
-	fit_debug("wr: remotr_addr: %p, rkey: %#lx\n",
-		wr.remote_addr, wr.rkey);
+	fit_debug("wr: remotr_addr: %p, rkey: %#lx\n", wr.remote_addr, wr.rkey);
+	printk(KERN_CRIT "wr: remotr_addr: %p, rkey: %#lx\n", wr.remote_addr, wr.rkey);
 
 	if(s_mode == FIT_SEND_MESSAGE_HEADER_AND_IMM)
 	{
-		_wr->opcode = IB_WR_RDMA_WRITE_WITH_IMM;
+    	_wr->opcode = IB_WR_RDMA_WRITE_WITH_IMM;
 		_wr->ex.imm_data = imm;
-		_wr->send_flags = IB_SEND_SIGNALED;
+        _wr->send_flags = IB_SEND_SIGNALED;
 		_wr->num_sge = 2;
 
 		temp_header_addr = fit_ib_reg_mr_addr(ctx, header, sizeof(struct imm_message_metadata));
@@ -1131,8 +1142,16 @@ retry_send_imm_request:
 	}
 
 	spin_lock(&connection_lock[connection_id]);
-	//printk(KERN_CRIT "%s about to post send conn %d wr_id %d num_sge %d\n",
-	//		__func__, connection_id, wr.wr_id, wr.num_sge);
+    myflag = IB_QP_DEST_QPN | IB_QP_PKEY_INDEX | IB_QP_STATE | IB_QP_CUR_STATE | 
+             IB_QP_QKEY | IB_QP_AV | IB_QP_RQ_PSN | IB_QP_SQ_PSN |               
+             IB_QP_ACCESS_FLAGS | IB_QP_PATH_MTU | IB_QP_MAX_QP_RD_ATOMIC | IB_QP_MAX_DEST_RD_ATOMIC;
+    ib_query_qp(ctx->qp[connection_id], &attr, myflag, &init_attr);
+    ib_query_pkey(ibd, attr.port_num, attr.pkey_index, &pkey);
+    ah = &attr.ah_attr;
+                                                            
+    printk(KERN_CRIT "qpn=%d, dest_qp_num=%d, qp_state=%d, cur_state=%d, pkey_idx=%d, pkey=%d, qkey=%d, access_flag=%d, mtu=%d, rq_psn=%d, sq_psn=%d, max_rd_atomic=%d, dest_rd_atomic=%d, port_num=%d\n", ctx->qp[connection_id]->qp_num, attr.dest_qp_num, attr.qp_state, attr.cur_qp_state, attr.pkey_index, pkey, attr.qkey, attr.qp_access_flags, attr.path_mtu, attr.rq_psn, attr.sq_psn, attr.max_rd_atomic, attr.max_dest_rd_atomic, attr.port_num);
+    printk(KERN_CRIT "dlid=%d, src_path_bits=%d\n", ah->ib.dlid, ah->ib.src_path_bits);
+
 	ret = ib_post_send(ctx->qp[connection_id], _wr, &bad_wr);
 	
 	if(!ret)
@@ -2260,7 +2279,7 @@ struct lego_context *fit_establish_conn(struct ib_device *ib_dev, int ib_port, i
 		printk(KERN_CRIT "allocated local recv mr for node %d addr %p %p lkey %d rkey %d",
 				i, ctx->local_rdma_recv_rings[i], ret_mr->addr, ret_mr->lkey, ret_mr->rkey);
 	}
-// return NULL; // OK
+
 	/* array to store rdma ring mr for all remote nodes */
 	ctx->remote_rdma_ring_mrs = (struct fit_ibv_mr *)kmalloc(MAX_NODE * sizeof(struct fit_ibv_mr), GFP_KERNEL);
 	ctx->remote_rdma_ring_mrs_offset = (int *)kzalloc(MAX_NODE * sizeof(int), GFP_KERNEL);

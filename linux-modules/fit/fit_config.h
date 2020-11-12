@@ -23,8 +23,8 @@
  * These configruations must match the numbers in P and M
  * Otherwise we will fail to connect.
  */
-#define CONFIG_FIT_FIRST_QPN		(80)
-#define CONFIG_FIT_NR_QPS_PER_PAIR	(12)
+#define CONFIG_FIT_FIRST_QPN		(888)
+#define CONFIG_FIT_NR_QPS_PER_PAIR	(1)
 
 //#define CONFIG_SOCKET_O_IB
 
