@@ -39,6 +39,17 @@ static inline void fit_debug(const char *fmt, ...) { }
 	pr_debug("%s()-%d CPU%2d " fmt "\n",				\
 		__func__, __LINE__, smp_processor_id(), __VA_ARGS__)
 
+static inline _ib_post_send(struct ib_qp *qp, const struct ib_send_wr *wr, const struct ib_send_wr **bad_wr, char* caller)
+{
+    printk(KERN_DEBUG "%s Call ib_post_send with qpn=%d\n", caller, qp->qp_num);
+    return ib_post_send(qp, wr, bad_wr);
+}
+
+static inline _ib_post_recv(struct ib_qp *qp, const struct ib_recv_wr *wr, const struct ib_recv_wr **bad_wr, char* caller)
+{
+    printk(KERN_DEBUG "%s Call ib_post_recv with qpn=%d\n", caller, qp->qp_num);
+    return ib_post_recv(qp, wr, bad_wr);
+}
 
 // TODO: Move to other place? ---------
 /*
@@ -587,8 +598,8 @@ static int fit_post_receives_message(struct lego_context *ctx, int connection_id
 		wr.sg_list = NULL;
 		wr.num_sge = 0;
 
-		ret = ib_post_recv(ctx->qp[connection_id], &wr,
-                           (const struct ib_recv_wr **)&bad_wr);
+		ret = _ib_post_recv(ctx->qp[connection_id], &wr,
+                           (const struct ib_recv_wr **)&bad_wr, __func__);
 		if (ret) {
 			pr_err("Fail to post_recv conn_id: %d, i: %d, depth: %d\n",
 				connection_id, i, depth);
@@ -613,7 +624,7 @@ int sock_post_receives_message(struct lego_context *ctx, int connection_id, int 
 		wr.next = NULL;
 		wr.sg_list = NULL;
 		wr.num_sge = 0;
-		ib_post_recv(ctx->sock_qp[connection_id], &wr, &bad_wr);
+		_ib_post_recv(ctx->sock_qp[connection_id], &wr, &bad_wr, __func__);
 		if (ret) {
 			pr_err("Fail to post recv\n");
 			WARN_ON(1);
@@ -652,7 +663,7 @@ int sock_post_receive_buffer(struct lego_context *ctx, int connection_id, int de
 		wr.next = NULL;
 		wr.sg_list = sge;
 		wr.num_sge = 1;
-		ret = ib_post_recv(ctx->sock_qp[connection_id], &wr, &bad_wr);
+		ret = _ib_post_recv(ctx->sock_qp[connection_id], &wr, &bad_wr);
 		if (ret) {
 			printk(KERN_CRIT "ERROR: %s post recv error %d i %d\n", 
 				__func__, ret, i);
@@ -707,8 +718,8 @@ int fit_post_receives_message_with_buffer(struct lego_context *ctx, int connecti
 		wr.next = NULL;
 		wr.sg_list = sge;
 		wr.num_sge = 2;
-		ret = ib_post_recv(ctx->qp[connection_id], &wr,
-                           (const struct ib_recv_wr **)&bad_wr);
+		ret = _ib_post_recv(ctx->qp[connection_id], &wr,
+                           (const struct ib_recv_wr **)&bad_wr, __func__);
 		if (ret) {
 			printk(KERN_CRIT "ERROR: %s post recv error %d conn %d i %d\n", 
 				__func__, ret, connection_id, i);
@@ -1152,7 +1163,7 @@ retry_send_imm_request:
     printk(KERN_CRIT "qpn=%d, dest_qp_num=%d, qp_state=%d, cur_state=%d, pkey_idx=%d, pkey=%d, qkey=%d, access_flag=%d, mtu=%d, rq_psn=%d, sq_psn=%d, max_rd_atomic=%d, dest_rd_atomic=%d, port_num=%d\n", ctx->qp[connection_id]->qp_num, attr.dest_qp_num, attr.qp_state, attr.cur_qp_state, attr.pkey_index, pkey, attr.qkey, attr.qp_access_flags, attr.path_mtu, attr.rq_psn, attr.sq_psn, attr.max_rd_atomic, attr.max_dest_rd_atomic, attr.port_num);
     printk(KERN_CRIT "dlid=%d, src_path_bits=%d\n", ah->ib.dlid, ah->ib.src_path_bits);
 
-	ret = ib_post_send(ctx->qp[connection_id], _wr, &bad_wr);
+	ret = _ib_post_send(ctx->qp[connection_id], _wr, &bad_wr, __func__);
 	
 	if(!ret)
 	{
@@ -1489,7 +1500,7 @@ int sock_send_message_with_rdma_imm(struct lego_context *ctx, int target_node, u
 	spin_lock(&sock_qp_lock[target_node]);
 	//printk(KERN_CRIT "%s about to post send conn %d wr_id %d num_sge %d\n",
 	//		__func__, connection_id, wr.wr_id, wr.num_sge);
-	ret = ib_post_send(ctx->sock_qp[target_node], _wr, &bad_wr);
+	ret = _ib_post_send(ctx->sock_qp[target_node], _wr, &bad_wr, __func__);
 	
 	if(!ret)
 	{
@@ -1827,7 +1838,7 @@ int fit_send_request(struct lego_context *ctx, int connection_id, enum mode s_mo
 	sge.length = size;
 	sge.lkey = ctx->proc->lkey;
 
-	ret = ib_post_send(ctx->qp[connection_id], _wr, &bad_wr);
+	ret = _ib_post_send(ctx->qp[connection_id], _wr, &bad_wr, __func__);
 	if(!ret)
 	{
 		fit_internal_poll_sendcq(ctx->send_cq[connection_id], connection_id, &poll_status);
@@ -1998,7 +2009,7 @@ int fit_send_request_without_polling(struct lego_context *ctx, int connection_id
 	sge.length = size;
 	sge.lkey = ctx->proc->lkey;
 	
-	ret = ib_post_send(ctx->qp[connection_id], _wr, &bad_wr);
+	ret = _ib_post_send(ctx->qp[connection_id], _wr, &bad_wr, __func__);
 	if(ret)
 		printk("Error in [%s] ret:%d \n", __func__, ret);
 	
@@ -2065,7 +2076,7 @@ int fit_send_test(struct lego_context *ctx, int connection_id, int type, void *a
 	_wr->num_sge = 1;
 	_wr->send_flags = IB_SEND_SIGNALED;
 
-	ret = ib_post_send(ctx->qp[connection_id], _wr, &bad_wr);
+	ret = _ib_post_send(ctx->qp[connection_id], _wr, &bad_wr, __func__);
 	if(ret==0)
 	{
 		do{
@@ -2128,7 +2139,7 @@ int fit_send_message_sge(struct lego_context *ctx, int connection_id, int type, 
 	sge[1].length = size;
 	sge[1].lkey = ctx->proc->lkey;
 
-	ret = ib_post_send(ctx->qp[connection_id], _wr, &bad_wr);
+	ret = _ib_post_send(ctx->qp[connection_id], _wr, &bad_wr, __func__);
 	printk(KERN_CRIT "%s headeraddr %p %p bufaddr %p %#Lx lkey %d\n",
 		__func__, &output_header, output_header_addr, addr, sge[1].addr, ctx->proc->lkey);
 	if(ret==0)
