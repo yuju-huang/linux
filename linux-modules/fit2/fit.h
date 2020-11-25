@@ -10,13 +10,21 @@
 #ifndef HAVE_CLIENT_H
 #define HAVE_CLIENT_H
 
-#include <lego/spinlock.h>
-#include <lego/atomic.h>
+#include <linux/spinlock.h>
+#include <linux/atomic.h>
+
+#include <rdma/ib_verbs.h>
+
 //#include <lego/wait.h>
-#include <net/arch/cc.h>
-#include <lego/socket.h>
 
 #define DEBUG_SHINYEH
+
+// TODO: Port Profile framework in?
+#define DEFINE_PROFILE_POINT(profile)
+#define PROFILE_POINT_TIME(profile)
+#define PROFILE_START(profile)
+#define PROFILE_LEAVE(profile)
+
 
 #define MAX_FIT_NUM 4
 
@@ -31,6 +39,12 @@
 #define MAX_NODE_BIT 5
 
 #define LISTEN_PORT 18500
+
+/*
+ * Maximum timeout for a ibapi_send_reply_timeout call
+ */
+#define CONFIG_FIT_MAX_RPC_TIMEOUT_SEC 60
+#define FIT_MAX_TIMEOUT_SEC	CONFIG_FIT_MAX_RPC_TIMEOUT_SEC
 
 /*
  * QPs between each node pair

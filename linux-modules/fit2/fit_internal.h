@@ -20,7 +20,7 @@
  * Each recv_cq has its dedicated polling thread.
  * Configured at compile time.
  */
-#define NUM_POLLING_THREADS		(CONFIG_FIT_NR_RECVCQ_POLLING_THREADS)
+#define NUM_POLLING_THREADS		(1)
 
 /* THREAD_HANDLER_MODEL - CHOOSE ONE*/
 #define WAITING_QUEUE_IMPLEMENTATION
@@ -72,7 +72,6 @@ int fit_reply_message_w_extra_bits(ppc *ctx, void *addr, int size, int private_b
 int fit_receive_message(ppc *ctx, unsigned int port, void *ret_addr, int receive_size, uintptr_t *reply_descriptor, int userspace_flag);
 
 int fit_internal_init(void);
-int fit_internal_cleanup(void);
 
 /* fit_machine.c */
 void init_global_lid_qpn(void);

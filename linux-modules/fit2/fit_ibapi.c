@@ -7,13 +7,13 @@
  * (at your option) any later version.
  */
 
-#include <lego/net.h>
-#include <lego/slab.h>
-#include <lego/sched.h>
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/net.h>
+#include <linux/slab.h>
+#include <linux/sched.h>
 #include <rdma/ib_verbs.h>
-#include <lego/fit_ibapi.h>
-#include <lego/completion.h>
-#include <lego/profile.h>
+#include <linux/completion.h>
 #include "fit.h"
 #include "fit_internal.h"
 
@@ -30,6 +30,8 @@
 #define SRCADDR INADDR_ANY
 #define DSTADDR ((unsigned long int)0xc0a87b01) /* 192.168.123.1 */
 
+#define MY_NODE_ID CONFIG_FIT_LOCAL_ID
+
 int num_parallel_connection = NUM_PARALLEL_CONNECTION;
 atomic_t global_reqid;
 ppc *FIT_ctx;
@@ -37,12 +39,32 @@ int curr_node;
 struct ib_device *ibapi_dev;
 struct ib_pd *ctx_pd;
 
+static bool check_port_status(struct ib_device *dev)
+{
+    const int start_port = rdma_start_port(dev);
+    const int end_port = rdma_end_port(dev);
+    struct ib_port_attr port_attr;
+    int port;
+
+    for (port = start_port; port <= end_port; ++port) {
+        if (ib_query_port(dev, port, &port_attr) < 0) continue;
+        if ((port_attr.lid) != 0 && (port_attr.state == IB_PORT_ACTIVE))
+            return true;
+    }
+    return false;
+}
 static void ibv_add_one(struct ib_device *device)
 {
+    if (FIT_ctx != NULL) return;
+
+    if (!check_port_status(device)) return;
+
 	FIT_ctx = kmalloc(sizeof(struct lego_context), GFP_KERNEL);
 	ibapi_dev = device;
+	if (device == NULL)
+		printk(KERN_CRIT "%s device NULL\n", __func__);
 
-	ctx_pd = ib_alloc_pd(device);
+	ctx_pd = ib_alloc_pd(device, 0);
 	if (!ctx_pd) {
 		printk(KERN_ALERT "Couldn't allocate PD\n");
 	}
@@ -50,7 +72,7 @@ static void ibv_add_one(struct ib_device *device)
 	return;
 }
 
-static void ibv_remove_one(struct ib_device *device)
+static void ibv_remove_one(struct ib_device *device, void *client_data)
 {
 	return;
 }
@@ -358,8 +380,41 @@ static struct ib_client ibv_client = {
 	.remove = ibv_remove_one
 };
 
-//#define FIT_TESTING
+#define FIT_TESTING
 
+#if 1
+static void lego_ib_test(void)
+{
+	int ret, i;
+	char *buf = kmalloc(4096, GFP_KERNEL);
+	char *retb = kmalloc(4096, GFP_KERNEL);
+	uintptr_t desc;
+
+    printk(KERN_CRIT "lego_ib_test\n");
+	if (CONFIG_FIT_LOCAL_ID == 0) {
+		for (i = 0; i < 10; i++) {
+			ret = ibapi_receive_message(0, buf, 4096, &desc);
+			pr_info("received message ret %d msg [%s]\n", ret, buf);
+			if (ret == SEND_REPLY_SIZE_TOO_BIG) {
+				printk(KERN_CRIT "received msg wrong size %d\n", ret);
+				return;
+			}
+			retb[0] = '1';
+			retb[1] = '2';
+			retb[2] = '\0';
+			ret = ibapi_reply_message(retb, 10, desc);
+		}
+	} else {
+		buf[0] = 'a';
+		buf[1] = 'b';
+		buf[2] = '\0';
+		for (i = 0; i < 10; i++) {
+			ret = ibapi_send_reply_imm(0, buf, 4096, retb, 4096, 0);
+			pr_info("%s(%2d) retbuffer: %s\n", __func__, i, retb);
+		}
+	}
+}
+#else
 static void lego_ib_test(void)
 {
 #ifdef FIT_TESTING
@@ -417,10 +472,46 @@ static void lego_ib_test(void)
 	}
 #endif
 }
+#endif
 
-__initdata DEFINE_COMPLETION(ib_init_done);
+static int my_test(void)
+{
+    int i;
+    const size_t page_size = 4096;
+    const size_t size = 4096;
+    const int connection_id = 0;
+	char *buf = kmalloc(size, GFP_KERNEL);
+    if (!buf) {
+        printk(KERN_CRIT "alloc buf fails\n");
+        return 1;
+    }
+	for (i = 0; i < size; i += sizeof(char))
+		buf[i] = i % 255;
 
-int lego_ib_init(void *unused)
+    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_TO_DEVICE);
+    if (ib_dma_mapping_error(ibapi_dev, dma)) {
+        printk(KERN_CRIT "ib_dma_map_single fails\n");
+        return 1;
+    }
+	struct ib_sge list = {
+		.addr	= dma,
+		.length = size,
+		.lkey	= FIT_ctx->pd->local_dma_lkey,
+	};
+	struct ib_send_wr wr = {
+		.wr_id	    = 2,
+		.sg_list    = &list,
+		.num_sge    = 1,
+		.opcode     = IB_WR_SEND,
+		.send_flags = IB_SEND_SIGNALED,
+	};
+	struct ib_send_wr *bad_wr;
+
+    printk(KERN_DEBUG "calling ib_post_send\n");
+	return ib_post_send(FIT_ctx->qp[connection_id], &wr, (const struct ib_send_wr **)&bad_wr);
+}
+
+int lego_ib_init(void)
 {
 	int ret;
 	int nr_mad;
@@ -430,6 +521,8 @@ int lego_ib_init(void *unused)
 	init_global_lid_qpn();
 	print_gloabl_lid();
 
+    // TODO: enable?
+#if 0
 	/*
 	 * XXX
 	 * What's the reason to wait again? 7 is magic number here.
@@ -441,6 +534,7 @@ int lego_ib_init(void *unused)
 	pr_info("Please wait for enough IB MAD (number: %d) ...\n", nr_mad);
 	while (mad_got_one < nr_mad)
 		schedule();
+#endif
 
 	ret = ib_register_client(&ibv_client);
 	if (ret) {
@@ -455,9 +549,19 @@ int lego_ib_init(void *unused)
 	BUG_ON(!FIT_ctx);
 	pr_info("FIT layer ready to go!\n");
 
-	lego_ib_test();
-
-	/* notify init that ib has done initialization */
-	complete(&ib_init_done);
+//	lego_ib_test();
+    ret = my_test();
+    printk(KERN_CRIT "my_test return %d\n");
 	return 0;
 }
+
+static void lego_ib_cleanup(void)
+{
+	pr_info("Removing LegoOS FIT Module...");
+	fit_cleanup_module();
+	ib_unregister_client(&ibv_client);
+}
+
+module_init(lego_ib_init);
+module_exit(lego_ib_cleanup);
+MODULE_LICENSE("GPL");

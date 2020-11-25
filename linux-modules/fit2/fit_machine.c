@@ -7,24 +7,23 @@
  * (at your option) any later version.
  */
 
-#include <lego/sched.h>
-#include <lego/init.h>
-#include <lego/mm.h>
-#include <lego/net.h>
-#include <lego/kthread.h>
-#include <lego/workqueue.h>
-#include <lego/list.h>
-#include <lego/string.h>
-#include <lego/jiffies.h>
-#include <lego/pci.h>
-#include <lego/delay.h>
-#include <lego/slab.h>
-#include <lego/time.h>
-#include <lego/timer.h>
-#include <lego/kernel.h>
+#include <linux/sched.h>
+#include <linux/init.h>
+#include <linux/mm.h>
+#include <linux/net.h>
+#include <linux/kthread.h>
+#include <linux/workqueue.h>
+#include <linux/list.h>
+#include <linux/string.h>
+#include <linux/jiffies.h>
+#include <linux/pci.h>
+#include <linux/delay.h>
+#include <linux/slab.h>
+#include <linux/time.h>
+#include <linux/kernel.h>
 #include <rdma/ib_verbs.h>
 
-#include <uapi/fit.h>
+#include "../../include/uapi/lego/fit.h"
 
 #include "fit_internal.h"
 
@@ -39,15 +38,13 @@ struct fit_machine_info *lego_cluster[CONFIG_FIT_NR_NODES];
  * raw numbers.
  */
 static const char *lego_cluster_hostnames[CONFIG_FIT_NR_NODES] = {
-	[0]	=	"node0",
-	[1]	=	"node1",
+	[0]	=	"compute21",
+	[1]	=	"compute22",
 };
 
 static struct fit_machine_info WUKLAB_CLUSTER[] = {
-	[0]	= {	.hostname =	"node0",	.lid =	42,	},
-	[1]	= {	.hostname =	"node1",	.lid =	23,	},
-	[2]	= {	.hostname =	"node2",	.lid =	8,	},
-	[3]	= {	.hostname =	"node3",	.lid =	9,	},
+    [0]	= {	.hostname =	"compute21", .lid = 18, },
+    [1]	= {	.hostname =	"compute22", .lid = 19, },
 };
 
 /* Indicate machines that are used by lego */
@@ -110,10 +107,13 @@ void init_global_lid_qpn(void)
 	int nid;
 	bool bug = false;
 
+    // TODO: enable
+#if 0
 #if defined(CONFIG_FIT_LOCAL_ID) && defined(CONFIG_FIT_NR_NODES)
 	BUILD_BUG_ON(CONFIG_FIT_LOCAL_ID >= CONFIG_FIT_NR_NODES);
 #else
 	BUILD_BUG_ON(1);
+#endif
 #endif
 
 	/*
@@ -144,8 +144,11 @@ void init_global_lid_qpn(void)
 			bug = true;
 		}
 	}
-	if (bug)
-		panic("Please check your network config!");
+	if (bug) {
+		// panic("Please check your network config!");
+		pr_err("Please check your network config!");
+		WARN_ON(1);
+    }
 }
 
 void print_gloabl_lid(void)
