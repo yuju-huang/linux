@@ -2115,8 +2115,11 @@ int fit_send_message_sge(struct lego_context *ctx, int connection_id, int type, 
 	int ret;
 	int ne, i;
 	struct ib_wc wc[2];
-	struct ibapi_header output_header;
-	void *output_header_addr;
+    struct ibapi_header* output_header = kmalloc(sizeof(struct ibapi_header), GFP_KERNEL);
+    if (!output_header) {
+        printk(KERN_CRIT "alloc buf fails\n");
+        return 1;
+    }
 
 	printk(KERN_CRIT "%s conn %d addr %p size %d sendcq %p type %d\n", __func__, connection_id, addr, size, ctx->send_cq[connection_id], type);
 	spin_lock(&connection_lock[connection_id]);
@@ -2130,18 +2133,26 @@ int fit_send_message_sge(struct lego_context *ctx, int connection_id, int type, 
 	_wr->num_sge = 2;
 	_wr->send_flags = IB_SEND_SIGNALED;
 
-	fit_setup_ibapi_header(ctx->node_id, inbox_addr, inbox_semaphore, size, priority, type, &output_header);
-	output_header_addr = (void *)fit_ib_reg_mr_addr(ctx, &output_header, sizeof(struct ibapi_header));
-	sge[0].addr = (uintptr_t)output_header_addr;
+	fit_setup_ibapi_header(ctx->node_id, inbox_addr, inbox_semaphore, size, priority, type, output_header);
+	sge[0].addr = (uintptr_t)fit_ib_reg_mr_addr(ctx, output_header, sizeof(struct ibapi_header));
 	sge[0].length = sizeof(struct ibapi_header);
 	sge[0].lkey = ctx->proc->lkey;
-	sge[1].addr = (uintptr_t)fit_ib_reg_mr_addr(ctx, addr, size);
+	sge[1].addr = fit_ib_reg_mr_addr(ctx, addr, size);
 	sge[1].length = size;
 	sge[1].lkey = ctx->proc->lkey;
 
+    if (ib_dma_mapping_error((struct ib_device*)ctx->context, sge[0].addr)) {
+        printk(KERN_CRIT "output heade addr map error\n");
+        return 1;
+    }
+    if (ib_dma_mapping_error((struct ib_device*)ctx->context, sge[1].addr)) {
+        printk(KERN_CRIT "buf addr map error\n");
+        return 1;
+    }
+
 	ret = _ib_post_send(ctx->qp[connection_id], _wr, &bad_wr, __func__);
 	printk(KERN_CRIT "%s headeraddr %p %p bufaddr %p %#Lx lkey %d\n",
-		__func__, &output_header, output_header_addr, addr, sge[1].addr, ctx->proc->lkey);
+		__func__, &output_header, sge[0].addr, addr, sge[1].addr, ctx->proc->lkey);
 	if(ret==0)
 	{
 		do{
@@ -2166,6 +2177,7 @@ int fit_send_message_sge(struct lego_context *ctx, int connection_id, int type, 
 		printk(KERN_INFO "%s send fail %d\n", __func__, connection_id);
 	}
 	spin_unlock(&connection_lock[connection_id]);
+    kfree(output_header);
 	return ret;
 }
 
