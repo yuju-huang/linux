@@ -14,6 +14,7 @@
 #include <linux/sched.h>
 #include <rdma/ib_verbs.h>
 #include <linux/completion.h>
+
 #include "fit.h"
 #include "fit_internal.h"
 
@@ -545,8 +546,11 @@ int lego_ib_init(void)
 	/*
 	 * Use port 1
 	 */
-	FIT_ctx = fit_establish_conn(ibapi_dev, 1, MY_NODE_ID);
-	BUG_ON(!FIT_ctx);
+	FIT_ctx = fit_establish_conn(ibapi_dev, /* port */1, MY_NODE_ID);
+    if (!FIT_ctx) {
+		pr_err("couldn't establish fit connection\n");
+        return 1;
+    }
 	pr_info("FIT layer ready to go!\n");
 
 //	lego_ib_test();

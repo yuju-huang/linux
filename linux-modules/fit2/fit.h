@@ -19,6 +19,21 @@
 
 #define DEBUG_SHINYEH
 
+enum lego_manager_type{
+	LEGO_PROCESSOR,
+	LEGO_MEMORY,
+	LEGO_STORAGE,
+};
+
+#define FIT_HOSTNAME_MAX	16
+
+struct fit_machine_info {
+	const char		hostname[FIT_HOSTNAME_MAX];
+	unsigned long		lid;
+	unsigned int		first_qpn;
+	enum lego_manager_type	type;
+};
+
 // TODO: Port Profile framework in?
 #define DEFINE_PROFILE_POINT(profile)
 #define PROFILE_POINT_TIME(profile)
@@ -33,8 +48,6 @@
 #define FIT_LINUX_PAGE_OFFSET 0x00000fff
 
 #define CIRCULAR_BUFFER_LENGTH 256
-
-#define MAX_NODE	CONFIG_FIT_NR_NODES
 
 #define MAX_NODE_BIT 5
 

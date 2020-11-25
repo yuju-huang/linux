@@ -27,13 +27,15 @@
 #include <linux/kernel.h>
 #include <rdma/ib_verbs.h>
 
+#include "fit_config.h"
 #include "fit_ibapi.h"
 #include "fit_internal.h"
 #include "pin.h"
 
+#define CONFIG_FIT_DEBUG 1
 #ifdef CONFIG_FIT_DEBUG
 #define fit_debug(fmt, ...) \
-	pr_debug("%s():%d " fmt, __func__, __LINE__, __VA_ARGS__)
+	printk(KERN_DEBUG "%s():%d " fmt, __func__, __LINE__, __VA_ARGS__)
 #else
 static inline void fit_debug(const char *fmt, ...) { }
 #endif
@@ -317,8 +319,11 @@ static void align_first_qpn(struct ib_pd *pd, struct ib_qp_init_attr *init_attr)
 
 next:
 	qp = ib_create_qp(pd, init_attr);
-	if (IS_ERR_OR_NULL(qp))
-		panic("Fail to create QPs to align first QPN.");
+	if (IS_ERR_OR_NULL(qp)) {
+//		panic("Fail to create QPs to align first QPN.");
+		pr_err("Fail to create QPs to align first QPN.");
+        return;
+    }
 
 	if (first) {
 		pr_debug("To align first QPN, we skipped: #%d", qp->qp_num);
@@ -330,10 +335,12 @@ next:
 		printk(KERN_CONT "\n");
 		qpn_aligned = true;
 		return;
-	} else if (qp->qp_num > (FIRST_QPN - 1))
-		panic("Initial alloc qpn: %d. align qpn: %d",
+	} else if (qp->qp_num > (FIRST_QPN - 1)) {
+//		panic("Initial alloc qpn: %d. align qpn: %d",
+//			qp->qp_num, FIRST_QPN);
+		pr_err("Initial alloc qpn: %d. align qpn: %d",
 			qp->qp_num, FIRST_QPN);
-	else
+	} else
 		goto next;
 }
 
@@ -616,7 +623,6 @@ static int fit_post_receives_message(ppc *ctx, int connection_id, int depth)
 			PROFILE_LEAVE(fit_post_recv);
 			fit_err("Fail to post_recv conn_id: %d, i: %d, depth: %d",
 				connection_id, i, depth);
-			WARN_ON(1);
 			return ret;
 		}
 	}
@@ -857,7 +863,6 @@ static int get_global_qpn(int mynodeid, int remnodeid, int conn)
 	int remote_first_qpn;
 
 	remote_first_qpn = get_node_first_qpn(remnodeid);
-	BUG_ON(!remote_first_qpn);
 
 #ifdef CONFIG_SOCKET_O_IB
 	/* +1 for sock_qp */
@@ -1054,7 +1059,7 @@ static int fit_internal_poll_sendcq(ppc *ctx, struct ib_cq *tar_cq,
 		if (unlikely(sched_clock() - start_ns > FIT_POLL_CQ_TIMEOUT_NS)) {
 			pr_info_once("\n"
 				"*****\n"
-				"***** Fail to to get the CQE from send_cq (%p) after %ld seconds!\n"
+				"***** Fail to get the CQE from send_cq (%p) after %ld seconds!\n"
 				"***** CPU: %d connection_id: %d dest node: %d\n"
 				"*****\n",
 				tar_cq,
@@ -1885,8 +1890,10 @@ static int fit_poll_recv_cq(void *_info)
 	wc = kmalloc(sizeof(*wc) * NUM_PARALLEL_CONNECTION, GFP_KERNEL);
 	BUG_ON(!wc);
 
-	if (pin_current_thread())
-		panic("Fail to pin poll_cq");
+	if (pin_current_thread()) {
+		pr_err("Fail to pin poll_cq");
+		// panic("Fail to pin poll_cq");
+    }
 
 	while(1) {
 		/* We keep polling this CQ */
@@ -2837,7 +2844,9 @@ int fit_multicast_send_reply(ppc *ctx, int num_nodes, int *target_node,
 	}
 
 	if (1) {
-		panic("If used, patch the usage reply_indicator. "
+//		panic("If used, patch the usage reply_indicator. "
+//		      "Similar to send_reply part.");
+		pr_err("If used, patch the usage reply_indicator. "
 		      "Similar to send_reply part.");
 	}
 
@@ -2905,7 +2914,7 @@ int fit_send_message_sge(ppc *ctx, int connection_id, int type, void *addr,
 		if (unlikely(sched_clock() - start_ns > FIT_POLL_CQ_TIMEOUT_NS)) {
 			pr_info_once("\n"
 				"*****\n"
-				"***** Fail to to get the CQE from send_cq (%p) after %ld seconds!\n"
+				"***** Fail to get the CQE from send_cq (%p) after %ld seconds!\n"
 				"***** CPU: %d connection_id: %d dest node: %d\n"
 				"*****\n",
 				ctx->send_cq[connection_id],
@@ -3029,7 +3038,8 @@ retry:
 			"*** Please update the table to use the latest LID.\n"
 			"***\n", ctx->portinfo.lid,
 			get_node_global_lid(CONFIG_FIT_LOCAL_ID));
-		halt();
+//		halt();
+        return NULL;
 	}
 
 	/* This function will create a lot stuff including CQ, QP */
@@ -3066,7 +3076,10 @@ retry:
 	}
 #endif
 
+    // TODO: enable
+#if 0
 	kthread_run(waiting_queue_handler, ctx, "FIT_WQ_Handler");
+#endif
 
 	/*
 	 * Allocate and register local RDMA-IMM rings for all nodes
@@ -3141,11 +3154,12 @@ retry:
 	}
 #else
 	/* Default is 30 s */
-	for (i = 0; i < 30 * 1000; i++) {
+    int time = 1; // 30;
+	for (i = 0; i < time * 1000; i++) {
 		udelay(1000);
 	}
 #endif
-	send_rdma_ring_mr_to_other_nodes(ctx);
+//	send_rdma_ring_mr_to_other_nodes(ctx);
 
 	pr_debug("Please wait other nodes to join ...\n");
 

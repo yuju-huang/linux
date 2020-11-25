@@ -23,8 +23,7 @@
 #include <linux/kernel.h>
 #include <rdma/ib_verbs.h>
 
-#include "../../include/uapi/lego/fit.h"
-
+#include "fit_config.h"
 #include "fit_internal.h"
 
 /* Built based on node id */
