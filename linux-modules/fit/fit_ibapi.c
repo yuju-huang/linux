@@ -287,10 +287,14 @@ static int my_test(void)
         printk(KERN_CRIT "alloc buf fails\n");
         return 1;
     }
-	for (i = 0; i < size; i += page_size)
-		buf[i] = i / page_size % sizeof(char);
+	for (i = 0; i < size; i += sizeof(char))
+		buf[i] = i % 255;
 
-    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_FROM_DEVICE);
+    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_TO_DEVICE);
+    if (ib_dma_mapping_error(ibapi_dev, dma)) {
+        printk(KERN_CRIT "ib_dma_map_single fails\n");
+        return 1;
+    }
 	struct ib_sge list = {
 		.addr	= dma,
 		.length = size,
