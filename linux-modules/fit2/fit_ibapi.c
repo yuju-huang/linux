@@ -16,6 +16,7 @@
 #include <linux/completion.h>
 
 #include "fit.h"
+#include "fit_config.h"
 #include "fit_internal.h"
 
 #define HANDLER_LENGTH 0
@@ -475,7 +476,92 @@ static void lego_ib_test(void)
 }
 #endif
 
-static int my_test(void)
+static inline int parse_single_wc(uint64_t wr_id, enum ib_wc_status status)
+{
+	if (status != IB_WC_SUCCESS) {
+		printk(KERN_CRIT "Failed status %s (%d) for wr_id %d\n",
+			ib_wc_status_msg(status),
+			status, (int)wr_id);
+		return 1;
+	}
+
+    printk("wr_id %d ok\n", (int)wr_id);
+	return 0;
+}
+
+static int my_test_receive(void)
+{
+    // NOTE: Need to disable all other ib_post_recv
+    // (in fit_post_receives_message and fit_post_receives_message_with_buffer)
+
+    int i;
+    const size_t page_size = 4096;
+    const size_t size = 4096;
+    const int connection_id = 1;
+	char *buf = kmalloc(size, GFP_KERNEL);
+    if (!buf) {
+        printk(KERN_CRIT "alloc buf fails\n");
+        return 1;
+    }
+    memset(buf, 0, size);
+
+    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_FROM_DEVICE);
+    if (ib_dma_mapping_error(ibapi_dev, dma)) {
+        printk(KERN_CRIT "ib_dma_map_single fails\n");
+        return 1;
+    }
+	struct ib_sge list = {
+		.addr	= dma,
+		.length = size,
+		.lkey	= FIT_ctx->pd->local_dma_lkey,
+	};
+	struct ib_recv_wr wr = {
+		.wr_id	    = 2,
+		.sg_list    = &list,
+		.num_sge    = 1,
+	};
+	struct ib_recv_wr *bad_wr;
+
+    printk(KERN_DEBUG "calling ib_post_recv\n");
+	ib_post_recv(FIT_ctx->qp[connection_id], &wr, (const struct ib_recv_wr **)&bad_wr);
+
+	int ne, ret;
+	struct ib_wc wc;
+    int rcnt = 0;
+
+    while (rcnt < 1) {
+    	do {
+    		ne = ib_poll_cq(FIT_ctx->qp[connection_id]->recv_cq, 1, &wc);
+    		if (ne < 0) {
+    			printk(KERN_CRIT "poll CQ failed %d\n", ne);
+    			return 1;
+    		}
+    	} while (ne < 1);
+
+    	for (i = 0; i < ne; ++i) {
+    		ret = parse_single_wc(wc.wr_id, wc.status);
+    		if (ret) {
+    			printk(KERN_CRIT "parse WC failed %d\n", ne);
+    			return 1;
+            }
+            ++rcnt;
+        }
+    }
+
+    int valid = 1;
+	for (i = 0; i < size; i += sizeof(char)) {
+		if (buf[i] != (char)(i % 255)) {
+			printk("invalid data in buf[%d]=%d\n", i, buf[i]);
+            valid = 0;
+        }
+    }
+
+    printk(KERN_DEBUG "check result: valid=%d\n", valid);
+    printk(KERN_DEBUG "finish %s\n", __func__);
+    return 0;
+}
+
+static int my_test_send(void)
 {
     int i;
     const size_t page_size = 4096;
@@ -487,7 +573,7 @@ static int my_test(void)
         return 1;
     }
 	for (i = 0; i < size; i += sizeof(char))
-		buf[i] = i % 255;
+        buf[i] = i % 255;
 
     void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_TO_DEVICE);
     if (ib_dma_mapping_error(ibapi_dev, dma)) {
@@ -511,6 +597,17 @@ static int my_test(void)
     printk(KERN_DEBUG "calling ib_post_send\n");
 	return ib_post_send(FIT_ctx->qp[connection_id], &wr, (const struct ib_send_wr **)&bad_wr);
 }
+
+static int my_test(void)
+{
+    if (CONFIG_FIT_LOCAL_ID == COMPUTE_21_ID) {
+        // As receiver
+        return my_test_receive();
+    }
+
+    return my_test_send();
+}
+
 
 int lego_ib_init(void)
 {
@@ -554,7 +651,7 @@ int lego_ib_init(void)
 	pr_info("FIT layer ready to go!\n");
 
 //	lego_ib_test();
-    ret = my_test();
+//    ret = my_test();
     printk(KERN_CRIT "my_test return %d\n");
 	return 0;
 }

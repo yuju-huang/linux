@@ -1928,6 +1928,7 @@ static int fit_poll_recv_cq(void *_info)
 				addr = phys_to_virt(p_r_i_struct->msg);
 				type = temp_header.type;
 
+                printk(KERN_DEBUG "type=%d\n", type);
 				if (type == MSG_SEND_RDMA_RING_MR) {
 					memcpy(&ctx->remote_rdma_ring_mrs[temp_header.src_id],
 					       addr, sizeof(struct fit_ibv_mr));
@@ -1937,10 +1938,11 @@ static int fit_poll_recv_cq(void *_info)
 #endif
 
 					nr_joined_nodes++;
-					pr_debug(" ... Node [%2d] Joined. addr %p rkey %d nr_joined_nodes %d\n",
+					fit_debug(" ... Node [%2d] Joined. addr %p rkey %d nr_joined_nodes %d\n",
 						temp_header.src_id, ctx->remote_rdma_ring_mrs[temp_header.src_id].addr,
 						ctx->remote_rdma_ring_mrs[temp_header.src_id].rkey, nr_joined_nodes);
 				}
+                return 0;
 			} else if (wc[i].opcode == IB_WC_RECV_RDMA_WITH_IMM) {
 				/* IB_WC_WITH_IMM is the ONLY valid flag */
 				if (wc[i].wc_flags != IB_WC_WITH_IMM) {
@@ -2889,7 +2891,7 @@ int fit_send_message_sge(ppc *ctx, int connection_id, int type, void *addr,
 	_wr->send_flags = IB_SEND_SIGNALED;
 
 	fit_setup_ibapi_header(ctx->node_id, reply_addr, reply_indicator_index, size, priority, type, msg_header);
-	msg_header_addr = (void *)fit_ib_reg_mr_addr(ctx, &msg_header, sizeof(struct ibapi_header));
+	msg_header_addr = (void *)fit_ib_reg_mr_addr(ctx, msg_header, sizeof(struct ibapi_header));
 	sge[0].addr = (uintptr_t)msg_header_addr;
 	sge[0].length = sizeof(struct ibapi_header);
 	sge[0].lkey = ctx->proc->lkey;
@@ -3057,7 +3059,7 @@ retry:
 		return NULL;
 
     // TODO: enable
-#if 0
+#if 1
 	for (i = 0; i < NUM_POLLING_THREADS; i++) {
 		info[i].recvcq_id = i;
 		info[i].ctx = ctx;
@@ -3154,20 +3156,17 @@ retry:
 	}
 #else
 	/* Default is 30 s */
-    int time = 1; // 30;
+    int time = 10; // 30;
 	for (i = 0; i < time * 1000; i++) {
 		udelay(1000);
 	}
 #endif
-//	send_rdma_ring_mr_to_other_nodes(ctx);
+	send_rdma_ring_mr_to_other_nodes(ctx);
 
 	pr_debug("Please wait other nodes to join ...\n");
 
-    // TODO: enable
-#if 0
 	while (nr_joined_nodes < ctx->num_node - 1)
 		schedule();
-#endif
 	return ctx;
 }
 
