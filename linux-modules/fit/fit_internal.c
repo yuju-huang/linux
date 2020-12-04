@@ -54,7 +54,6 @@ MODULE_LICENSE("GPL");
 
 // TODO: for debug, remove
 int fit_end = 0;
-int received_msg = 0;
 
 static inline dma_addr_t phys_to_dma(struct device *dev, phys_addr_t paddr)
 {
@@ -1929,7 +1928,6 @@ static int fit_poll_recv_cq(void *_info)
 		/* Update stats */
 		nr_recvcq_cqes[recvcq_id] += ne;
 
-        if (++received_msg > 2) return 0;
 		for (i = 0; i < ne; i++) {
 			if (unlikely(wc[i].status != IB_WC_SUCCESS)) {
 				fit_err("wc.status: %s, wr_id %d",
