@@ -13,27 +13,67 @@
 #include <linux/spinlock.h>
 #include <linux/atomic.h>
 
-#include "fit_config.h"
+#include <rdma/ib_verbs.h>
+
+//#include <lego/wait.h>
+
+#define DEBUG_SHINYEH
+
+enum lego_manager_type{
+	LEGO_PROCESSOR,
+	LEGO_MEMORY,
+	LEGO_STORAGE,
+};
+
+#define FIT_HOSTNAME_MAX	16
+
+struct fit_machine_info {
+	const char		hostname[FIT_HOSTNAME_MAX];
+	unsigned long		lid;
+	unsigned int		first_qpn;
+	enum lego_manager_type	type;
+};
+
+// TODO: Port Profile framework in?
+#define DEFINE_PROFILE_POINT(profile)
+#define PROFILE_POINT_TIME(profile)
+#define PROFILE_START(profile)
+#define PROFILE_LEAVE(profile)
+
 
 #define MAX_FIT_NUM 4
 
 #define FIT_USERSPACE_FLAG 1
 #define FIT_KERNELSPACE_FLAG 0
 #define FIT_LINUX_PAGE_OFFSET 0x00000fff
-#define FIT_LINUX_PAGE_SIZE 4096
 
 #define CIRCULAR_BUFFER_LENGTH 256
 
-/* fit_config.h */
-#define NUM_PARALLEL_CONNECTION		CONFIG_FIT_NR_QPS_PER_PAIR
+#define MAX_NODE_BIT 5
 
-#define RECV_DEPTH 256
-#define CONNECTION_ID_PUSH_BITS_BASED_ON_RECV_DEPTH 8
+#define LISTEN_PORT 18500
+
+/*
+ * Maximum timeout for a ibapi_send_reply_timeout call
+ */
+#define CONFIG_FIT_MAX_RPC_TIMEOUT_SEC 20
+#define FIT_MAX_TIMEOUT_SEC	CONFIG_FIT_MAX_RPC_TIMEOUT_SEC
+
+/*
+ * QPs between each node pair
+ * Configured at compile time.
+ */
+#define NUM_PARALLEL_CONNECTION			(CONFIG_FIT_NR_QPS_PER_PAIR)
+
+#define RECV_DEPTH					(256)
+#define CONNECTION_ID_PUSH_BITS_BASED_ON_RECV_DEPTH	(8)
+
 #ifdef CONFIG_SOCKET_O_IB
-#define GET_NODE_ID_FROM_POST_RECEIVE_ID(id) (id>>8) / (NUM_PARALLEL_CONNECTION + 1)
+# define GET_NODE_ID_FROM_POST_RECEIVE_ID(id)	((id>>8) / (NUM_PARALLEL_CONNECTION + 1))
 #else
-#define GET_NODE_ID_FROM_POST_RECEIVE_ID(id) (id>>8) / NUM_PARALLEL_CONNECTION
+# define GET_NODE_ID_FROM_POST_RECEIVE_ID(id)	((id>>8) / NUM_PARALLEL_CONNECTION)
 #endif
+
 #define GET_POST_RECEIVE_DEPTH_FROM_POST_RECEIVE_ID(id) (id&0x000000ff)
 
 #define LID_SEND_RECV_FORMAT "0000:0000:000000:000000:00000000000000000000000000000000"
@@ -47,8 +87,17 @@
 #define WRAP_UP_NUM_FOR_CIRCULAR_ID 256
 #define WRAP_UP_NUM_FOR_WAITING_INBOX 256
 #define WRAP_UP_NUM_FOR_TYPE 65536 //since there are 64 bits in wr_id, we are going to use 9-12 bits to do thread id waiting passing
+//const int MAX_NODE = 4;
 #define POST_RECEIVE_CACHE_SIZE 256
 #define SERVER_ID 0
+
+#ifdef CONFIG_FIT_MAX_OUTSTANDING_SEND
+# define MAX_OUTSTANDING_SEND	CONFIG_FIT_MAX_OUTSTANDING_SEND
+#else
+# error "Please config a number."
+#endif
+
+#define FIT_LINUX_PAGE_OFFSET 0x00000fff
 
 #define HIGH_PRIORITY 4
 #define LOW_PRIORITY 0
@@ -57,20 +106,28 @@
 #define CONGESTION_WARNING 1
 #define CONGESTION_FREE 0
 
+//MULTICAST RELATED
+#define MAX_MULTICAST_HOP 16
+#define MAX_LENGTH_OF_ATOMIC 256
+
 // IMM_ related things
 #define NUM_OF_CORES 2
 //Model 2 --> 2-6-24 (Send-recv-opcode, port, offset)
 #define IMM_SEND_REPLY_SEND	0x80000000
 #define IMM_SEND_REPLY_RECV	0x40000000
 #define IMM_ACK			0x20000000
+#define IMM_REPLY_W_EXTRA_BITS	0x10000000
 #define IMM_PORT_PUSH_BIT	24
 #define IMM_GET_PORT_NUMBER(imm) (imm<<2)>>26
 #define IMM_GET_OFFSET		0x00ffffff
-#define IMM_GET_SEMAPHORE	0x00ffffff
+#define IMM_GET_REPLY_INDICATOR_INDEX	0x000fffff
+#define IMM_SET_PRIVATE_BITS(bits)	(bits << 20)
+#define IMM_GET_PRIVATE_BITS(imm)	((imm >> 20) & 0xff)
+#define REPLY_PRIVATE_BITS_CNT	8
 //#define IMM_NODE_BITS		24
 //#define IMM_GET_NODE_ID(imm)	(imm>>24)&0xff
 #define IMM_GET_OPCODE		0x0f000000
-#define IMM_GET_OPCODE_NUMBER(imm)	(imm << 4) >> 28
+#define IMM_GET_OPCODE_NUMBER(imm) (imm<<4)>>28
 #define IMM_DATA_BIT 32
 #define IMM_NUM_OF_SEMAPHORE 64
 #define IMM_MAX_PORT 64
@@ -78,6 +135,8 @@
 #define IMM_MAX_SIZE IMM_RING_SIZE/NUM_OF_CORES
 #define IMM_SEND_SLEEP_SIZE_THRESHOLD 40960
 #define IMM_SEND_SLEEP_TIME_THRESHOLD 20
+//#define IMM_PORT_CACHE_SIZE 128
+//#define RDMA_RING_SIZE 128
 #define IMM_PORT_CACHE_SIZE 1024*1024*4
 #define RDMA_RING_SIZE 1024*1024*4
 #define IMM_ACK_FREQ 1024*512
@@ -122,8 +181,8 @@ struct ibapi_post_receive_intermediate_struct
 
 struct ibapi_header{
 	uint32_t        src_id;
-	uint64_t        inbox_addr;
-	uint64_t        inbox_semaphore;
+	uint64_t        reply_addr;
+	uint64_t        reply_indicator_index;
 	uint32_t        length;
 	int             priority;
 	int             type;
@@ -178,6 +237,7 @@ enum register_application_port_ret{
 struct app_reg_port{
 	struct fit_ibv_mr ring_mr;
 //	unsigned int port;
+
 	unsigned int node;
 //	uint64_t hash_key;
 	uint64_t port_node_key;
@@ -211,7 +271,7 @@ struct fit_lock_reserve_form{
 
 struct fit_lock_queue_element{
 	uint64_t        inbox_addr;
-	uint64_t        inbox_semaphore;	
+	uint64_t        reply_indicator_index;	
 	uint32_t        src_id;
 	unsigned int	ticket_num;
 	int	lock_num;
@@ -247,7 +307,7 @@ struct send_and_reply_format
 {       
         uint32_t        src_id;
         uint64_t        inbox_addr;
-	uint64_t	inbox_semaphore;
+	uint64_t	reply_indicator_index;
         uint32_t        length;
 	int		type;
         char            *msg;
@@ -305,32 +365,6 @@ enum {
 	PINGPONG_SEND_WRID = 2,
 };
 
-
-struct asy_IO_header
-{
-	int target_node;
-	uint64_t mr_key;
-	int size;
-	int priority;
-	uint64_t offset;
-	int complete;
-	int type;
-	uint32_t page_num;
-	char *addr;
-	int* wait_id_addr; 
-};
-
-enum asy_IO_event_type {
-	ASY_READ=1,
-	ASY_WRITE=2,
-	ASY_FENCE=3,
-	ASY_INIT=4,
-	SYN_WRITE=5,
-	REMOTE_MEMSET=6,
-	ASY_READ_PREFETCH=7,
-	ASY_WAIT=8
-};
-
 struct fit_ah_combined
 {
 	int			qpn;
@@ -344,9 +378,9 @@ struct fit_ah_combined
 struct imm_message_metadata
 {
 	uint32_t source_node_id;
-        uintptr_t inbox_addr;
-	uint32_t inbox_rkey;
-	uint32_t inbox_semaphore;
+        uintptr_t reply_addr;
+	uint32_t reply_rkey;
+	uint32_t reply_indicator_index;
 	uint32_t size;
 };
 
@@ -357,13 +391,11 @@ struct imm_header_from_cq_to_port
 	struct list_head list;
 };
 
-#ifdef CONFIG_SOCKET_O_IB
-#define MAX_SOCK_PORT_BITS	8 // maximum number of socket ports per node
-#define SOCK_PORT_HASH_BUCKET_BITS	5
-#define SOCK_MAX_OFFSET_BITS	20
-#define SOCK_PERNODE_RECV_MR_SIZE (1 << SOCK_MAX_OFFSET_BITS)
-#define SOCK_MAX_LISTEN_PORTS		(1 << MAX_SOCK_PORT_BITS)
-#endif
+struct _lego_context_pad {
+	char x[0];
+} ____cacheline_aligned_in_smp;
+
+#define CTX_PADDING(name)	struct _lego_context_pad name;
 
 struct lego_context {
 	struct ib_context	*context;
@@ -374,7 +406,7 @@ struct lego_context {
     	//wait_queue_head_t *cq_block_queue;
 	struct ib_cq		**send_cq;
 	struct ib_qp		**qp; // multiple queue pair for multiple connections
-	
+
 #ifdef CONFIG_SOCKET_O_IB
 	/* socket related */
 	struct ib_qp		**sock_qp;
@@ -391,7 +423,6 @@ struct lego_context {
 	int recv_numUD;
 	spinlock_t connection_lockUD;
 
-	int			 size;
 	int			 send_flags;
 	int			 rx_depth;
 	struct ib_port_attr     portinfo;
@@ -403,6 +434,7 @@ struct lego_context {
 	struct ib_mr *proc;
 	int node_id;
 
+	int			*send_cq_queued_sends;
 	int *recv_num;
 	atomic_t *atomic_request_num;
 	atomic_t parallel_thread_num;
@@ -457,7 +489,7 @@ struct lego_context {
    	int (*send_handler)(char *addr, uint32_t size, int sender_id);
 	int (*send_reply_handler)(char *input_addr, uint32_t input_size, char *output_addr, uint32_t *output_size, int sender_id);
 	int (*send_reply_opt_handler)(char *input_buf, uint32_t size, void **output_buf, uint32_t *output_size, int sender_id);
-	int (*send_reply_rdma_imm_handler)(int sender_id, void *msg, uint32_t size, uint32_t inbox_addr, uint32_t inbox_rkey, uint32_t inbox_semaphore);
+	int (*send_reply_rdma_imm_handler)(int sender_id, void *msg, uint32_t size, uint32_t inbox_addr, uint32_t inbox_rkey, uint32_t reply_indicator_index);
 
 	atomic_t* connection_congestion_status;
 	
@@ -475,19 +507,23 @@ struct lego_context {
 	//Related to barrier
 	atomic_t dist_barrier_counter;
 	
+	CTX_PADDING(_pad1_)
+	spinlock_t imm_waitqueue_perport_lock[IMM_MAX_PORT];
 	struct imm_header_from_cq_to_port imm_waitqueue_perport[IMM_MAX_PORT];
 	int imm_perport_reg_num[IMM_MAX_PORT];//-1 no registeration, 0 up --> how many
-	spinlock_t imm_waitqueue_perport_lock[IMM_MAX_PORT];
-	
+
 #ifdef CONFIG_SOCKET_O_IB
 	struct imm_header_from_cq_to_port sock_imm_waitqueue_perport[SOCK_MAX_LISTEN_PORTS];
 	spinlock_t sock_imm_waitqueue_perport_lock[SOCK_MAX_LISTEN_PORTS];
 #endif
 	
-	//local reply ready indicator related
-	void **reply_ready_indicators;
-	unsigned long *reply_ready_indicators_bitmap;
-	spinlock_t reply_ready_indicators_lock;
+	CTX_PADDING(_pad2_)
+	spinlock_t	indicators_lock;
+	void		*reply_ready_indicators[IMM_NUM_OF_SEMAPHORE];
+	DECLARE_BITMAP(reply_ready_indicators_bitmap, IMM_NUM_OF_SEMAPHORE);
+
+	CTX_PADDING(_pad3_)
+
 #ifdef ADAPTIVE_MODEL
 	wait_queue_head_t *imm_inbox_block_queue;
 #endif
@@ -505,8 +541,9 @@ struct lego_context {
 	struct fit_lock_form *lock_data;
 	struct fit_lock_queue_element *lock_queue;
 };
+typedef struct lego_context ppc;
 
-struct pingpong_dest {
+struct lego_dest {
 	int node_id;
 	int lid;
 	int qpn;
@@ -519,10 +556,11 @@ struct fit_data{
 };
 
 struct thread_pass_struct{
-	struct lego_context *ctx;
+	ppc *ctx;
 	struct ib_cq *target_cq;
 	char *msg;
 	struct send_and_reply_format *sr_request;
+	int recvcq_id;
 };
 
-#endif /* HAVE_CLIENT_H */
+#endif

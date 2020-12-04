@@ -13,12 +13,11 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <rdma/ib_verbs.h>
-//#include <linux/fit_ibapi.h>
 #include <linux/completion.h>
-#include "fit.h"
-#include "fit_internal.h"
 
-MODULE_AUTHOR("yiying");
+#include "fit.h"
+#include "fit_config.h"
+#include "fit_internal.h"
 
 #define HANDLER_LENGTH 0
 #define HANDLER_INTERARRIVAL 0
@@ -33,9 +32,11 @@ MODULE_AUTHOR("yiying");
 #define SRCADDR INADDR_ANY
 #define DSTADDR ((unsigned long int)0xc0a87b01) /* 192.168.123.1 */
 
+#define MY_NODE_ID CONFIG_FIT_LOCAL_ID
+
 int num_parallel_connection = NUM_PARALLEL_CONNECTION;
 atomic_t global_reqid;
-struct lego_context *FIT_ctx;
+ppc *FIT_ctx;
 int curr_node;
 struct ib_device *ibapi_dev;
 struct ib_pd *ctx_pd;
@@ -54,16 +55,14 @@ static bool check_port_status(struct ib_device *dev)
     }
     return false;
 }
-
 static void ibv_add_one(struct ib_device *device)
 {
-    // TODO: the global variable here is not good.
-    if (ibapi_dev != NULL) return;
+    if (FIT_ctx != NULL) return;
 
     if (!check_port_status(device)) return;
 
+	FIT_ctx = kmalloc(sizeof(struct lego_context), GFP_KERNEL);
 	ibapi_dev = device;
-	
 	if (device == NULL)
 		printk(KERN_CRIT "%s device NULL\n", __func__);
 
@@ -80,56 +79,251 @@ static void ibv_remove_one(struct ib_device *device, void *client_data)
 	return;
 }
 
-inline int ibapi_send_reply_imm(int target_node, void *addr, int size, void *ret_addr, int max_ret_size, int if_use_ret_phys_addr)
+#ifdef CONFIG_FIT_SEQUENTIAL_IBAPI
+static DEFINE_SPINLOCK(ibapi_send_reply_lock);
+static inline void lock_ib(void)
 {
-	struct lego_context *ctx = FIT_ctx;
+	spin_lock(&ibapi_send_reply_lock);
+}
+static inline void unlock_ib(void)
+{
+	spin_unlock(&ibapi_send_reply_lock);
+}
+#else
+static inline void lock_ib(void) { }
+static inline void unlock_ib(void) { }
+#endif
+
+unsigned long	nr_recvcq_cqes[NUM_POLLING_THREADS];
+#ifdef CONFIG_COUNTER_FIT_IB
+atomic_long_t	nr_ib_send_reply;
+atomic_long_t	nr_ib_send;
+atomic_long_t	nr_bytes_tx;
+atomic_long_t	nr_bytes_rx;
+
+void dump_ib_stats(void)
+{
+	int i;
+
+	pr_info("IB Stats:\n");
+	pr_info("    nr_ib_send_reply: %15ld\n", COUNTER_nr_ib_send_reply());
+	pr_info("    nr_ib_send:       %15ld\n", COUNTER_nr_ib_send());
+	for (i = 0; i < NUM_POLLING_THREADS; i++)
+		pr_info("      recvcq[0] CQEs: %15lu\n", nr_recvcq_cqes[i]);
+	pr_info("    nr_bytes_tx:      %15ld\n", COUNTER_nr_bytes_tx());
+	pr_info("    nr_bytes_rx:      %15ld\n", COUNTER_nr_bytes_rx());
+}
+#endif
+
+DEFINE_PROFILE_POINT(ibapi_send_reply)
+
+static inline int
+__ibapi_send_reply_timeout(int target_node, void *addr, int size, void *ret_addr,
+			   int max_ret_size, int if_use_ret_phys_addr,
+			   unsigned long timeout_sec, void *caller)
+{
+	ppc *ctx = FIT_ctx;
 	int ret;
-	ret = fit_send_reply_with_rdma_write_with_imm(ctx, target_node, addr, size, ret_addr, max_ret_size, 0, if_use_ret_phys_addr);
+        PROFILE_POINT_TIME(ibapi_send_reply)
+
+        PROFILE_START(ibapi_send_reply);
+
+	if (unlikely(target_node >= CONFIG_FIT_NR_NODES)) {
+		pr_info("target_node: %d\n", target_node);
+		BUG();
+	}
+
+	lock_ib();
+	ret = fit_send_reply_with_rdma_write_with_imm(ctx, target_node, addr,
+			size, ret_addr, max_ret_size, 0, if_use_ret_phys_addr,
+			timeout_sec, caller);
+
+	if (unlikely(ret > max_ret_size)) {
+		pr_info("ret: %d, max_ret_size: %d\n", ret, max_ret_size);
+		BUG();
+	}
+	unlock_ib();
+
+#ifdef CONFIG_COUNTER_FIT_IB
+	atomic_long_inc(&nr_ib_send_reply);
+	atomic_long_add(size, &nr_bytes_tx);
+	atomic_long_add(ret, &nr_bytes_rx);
+#endif
+
+        PROFILE_LEAVE(ibapi_send_reply);
 	return ret;
 }
-EXPORT_SYMBOL(ibapi_send_reply_imm);
+
+/* Default to use maximum timeout */
+int ibapi_send_reply_imm(int target_node, void *addr, int size, void *ret_addr,
+			 int max_ret_size, int if_use_ret_phys_addr)
+{
+	return __ibapi_send_reply_timeout(target_node, addr, size, ret_addr,
+			max_ret_size, if_use_ret_phys_addr, FIT_MAX_TIMEOUT_SEC,
+			__builtin_return_address(0));
+}
+
+/**
+ * ibapi_send_reply_timeout
+ * @target_node: target node id
+ * @addr
+ * @size
+ * @ret_addr
+ * @max_ret_size
+ * @if_use_ret_phys_addr:
+ * @timeout_sec:
+ *
+ * Return:
+ * Negative values on failure (-ETIMEDOUT for timeout)
+ * Positive values indicate the reply message length
+ */
+int ibapi_send_reply_timeout(int target_node, void *addr, int size, void *ret_addr,
+			     int max_ret_size, int if_use_ret_phys_addr,
+			     unsigned long timeout_sec)
+{
+	return __ibapi_send_reply_timeout(target_node, addr, size, ret_addr,
+			max_ret_size, if_use_ret_phys_addr, timeout_sec,
+			__builtin_return_address(0));
+}
+
+static inline int
+__ibapi_send_reply_timeout_w_private_bits(int target_node, void *addr, int size, void *ret_addr,
+			   int max_ret_size, int *private_bits, int if_use_ret_phys_addr,
+			   unsigned long timeout_sec, void *caller)
+{
+	ppc *ctx = FIT_ctx;
+	int ret;
+
+	ret = fit_send_reply_with_rdma_write_with_imm_reply_extra_bits(ctx, target_node, addr,
+			size, ret_addr, max_ret_size, private_bits, 0, if_use_ret_phys_addr,
+			timeout_sec, caller);
+
+	return ret;
+}
+
+DEFINE_PROFILE_POINT(ibapi_send)
+
+int ibapi_send(int target_node, void *addr, int size)
+{
+	int ret;
+	PROFILE_POINT_TIME(ibapi_send)
+
+#ifdef CONFIG_COUNTER_FIT_IB
+	atomic_long_inc(&nr_ib_send);
+	atomic_long_add(size, &nr_bytes_tx);
+#endif
+
+	PROFILE_START(ibapi_send);
+	ret = fit_send_with_rdma_write_with_imm(FIT_ctx, target_node, addr, size, 0);
+	PROFILE_LEAVE(ibapi_send);
+	return ret;
+}
+
+/**
+ * ibapi_multicast_send_reply_timeout - issue a RDMA request with several sge request - mainly used for multicast in kernel
+ * @ctx: fit context
+ * @num_nodes: number of multicast node
+ * @target_node: target node array
+ * @sglist: message array to be sent to the nodes
+ * @output_msg: array of reply message buffer
+ * @timeout_sec: timeout value in seconds
+ */
+int ibapi_multicast_send_reply_timeout(int num_nodes, int *target_node,
+				struct fit_sglist *sglist, struct fit_sglist *output_msg,
+				int max_ret_size, int if_use_ret_phys_addr, unsigned long timeout_sec)
+{
+	ppc *ctx = FIT_ctx;
+	int ret;
+
+	ret = fit_multicast_send_reply(ctx, num_nodes, target_node, sglist,
+			output_msg, max_ret_size, 0, if_use_ret_phys_addr,
+			timeout_sec, __builtin_return_address(0));
+	return ret;
+}
+
+inline int ibapi_receive_message(unsigned int designed_port,
+		void *ret_addr, int receive_size, uintptr_t *descriptor)
+{
+	ppc *ctx = FIT_ctx;
+	return fit_receive_message(ctx, designed_port, ret_addr, receive_size, descriptor, 0);
+}
+
+int ibapi_receive_message_no_reply(unsigned int designed_port,
+		void *ret_addr, int receive_size)
+{
+	ppc *ctx = FIT_ctx;
+	return fit_receive_message_no_reply(ctx, designed_port, ret_addr, receive_size, 0);
+}
+
+inline int ibapi_reply_message(void *addr, int size, uintptr_t descriptor)
+{
+	ppc *ctx = FIT_ctx;
+	return fit_reply_message(ctx, addr, size, descriptor, 0, 1);
+}
+
+inline int ibapi_reply_message_w_extra_bits(void *addr, int size, int bits, uintptr_t descriptor)
+{
+	ppc *ctx = FIT_ctx;
+	return fit_reply_message_w_extra_bits(ctx, addr, size, bits, descriptor, 0, 1);
+}
+
+inline int ibapi_reply_message_nowait(void *addr, int size, uintptr_t descriptor)
+{
+	ppc *ctx = FIT_ctx;
+	return fit_reply_message(ctx, addr, size, descriptor, 0, 0);
+}
+
+inline int ibapi_reply_message_w_extra_bits_no_wait(void *addr, int size, int bits, uintptr_t descriptor)
+{
+	ppc *ctx = FIT_ctx;
+	return fit_reply_message_w_extra_bits(ctx, addr, size, bits, descriptor, 0, 0);
+}
+
+#ifdef CONFIG_SOCKET_O_IB
+int ibapi_sock_send_message(int target_node, int dest_port, int if_internal_port, void *buf, int size, unsigned long timeout_sec, int if_userspace)
+{
+	ppc *ctx = FIT_ctx;
+
+	if (target_node == MY_NODE_ID || target_node > MAX_NODE) {
+		pr_crit("%s: wrong target node %d\n", __func__, target_node);
+		return -1;
+	}
+
+	return sock_send_message(ctx, target_node, dest_port, if_internal_port, buf, size, timeout_sec, if_userspace);
+}
+
+int ibapi_sock_receive_message(int *target_node, int port, uintptr_t *ret_addr, int receive_size, int if_userspace, int if_nonblock)
+{
+	ppc *ctx = FIT_ctx;
+	return sock_receive_message(ctx, target_node, port, ret_addr, receive_size, if_userspace, if_nonblock);
+}
+#endif
 
 #if 0
 int ibapi_register_application(unsigned int designed_port, unsigned int max_size_per_message, unsigned int max_user_per_node, char *name, uint64_t name_len)
 {
-	struct lego_context *ctx = FIT_ctx;
+	ppc *ctx = FIT_ctx;
 	return fit_register_application(ctx, designed_port, max_size_per_message, max_user_per_node, name, name_len);
 }
 
 int ibapi_unregister_application(unsigned int designed_port)
 {
-	struct lego_context *ctx = FIT_ctx;
+	ppc *ctx = FIT_ctx;
 	return fit_unregister_application(ctx, designed_port);
 }
 
 int ibapi_query_port(int target_node, int designed_port, int requery_flag)
-{	
-	struct lego_context *ctx = FIT_ctx;
+{
+	ppc *ctx = FIT_ctx;
 	return fit_query_port(ctx, target_node, designed_port, requery_flag);
 }
 #endif
-
-inline int ibapi_receive_message(unsigned int designed_port, void *ret_addr, int receive_size, uintptr_t *descriptor)
-{
-	struct lego_context *ctx = FIT_ctx;
-	//printk("Calling ibapi_receive_message\n");
-	return fit_receive_message(ctx, designed_port, ret_addr, receive_size, descriptor, 0);
-}
-EXPORT_SYMBOL(ibapi_receive_message);
-
-inline int ibapi_reply_message(void *addr, int size, uintptr_t descriptor)
-{
-	struct lego_context *ctx = FIT_ctx;
-	//printk("Calling ibapi_reply_message\n");
-	return fit_reply_message(ctx, addr, size, descriptor, 0);
-}
-EXPORT_SYMBOL(ibapi_reply_message);
 
 #if 0
 uint64_t ibapi_dist_barrier(unsigned int check_num)
 {
 	int i;
-	struct lego_context *ctx = FIT_ctx;
+	ppc *ctx = FIT_ctx;
 	int source = ctx->node_id;
 	int num_alive_nodes = atomic_read(&ctx->num_alive_nodes);
 	uintptr_t tempaddr;
@@ -161,40 +355,10 @@ void ibapi_free_recv_buf(void *input_buf)
 	//kmem_cache_free(post_receive_cache, input_buf);
 }
 
-#if 0
-int ibapi_reg_send_handler(int (*input_funptr)(char *addr, uint32_t size, int sender_id))
-{
-	struct lego_context *ctx = FIT_ctx;
-	ctx->send_handler = input_funptr;
-	return 0;
-}
-
-int ibapi_reg_send_reply_handler(int (*input_funptr)(char *input_addr, uint32_t input_size, char *output_addr, uint32_t *output_size, int sender_id))
-{
-	struct lego_context *ctx = FIT_ctx;
-	ctx->send_reply_handler = input_funptr;
-	return 0;
-}
-
-int ibapi_reg_send_reply_opt_handler(int (*input_funptr)(char *input_addr, uint32_t input_size, void **output_addr, uint32_t *output_size, int sender_id))
-{
-	struct lego_context *ctx = FIT_ctx;
-	ctx->send_reply_opt_handler = input_funptr;
-	return 0;
-}
-
-int ibapi_reg_send_reply_rdma_imm_handler(int (*input_funptr)(int sender_id, void *msg, uint32_t size, uint32_t inbox_addr, uint32_t inbox_rkey, uint32_t inbox_semaphore))
-{
-	struct lego_context *ctx = FIT_ctx;
-	ctx->send_reply_rdma_imm_handler = input_funptr;
-	return 0;
-}
-#endif
-
 int ibapi_num_connected_nodes(void)
 {
 	if(!FIT_ctx)
-	{	
+	{
 		printk(KERN_CRIT "%s: using FIT ctx directly since ctx is NULL\n", __func__);
 		return atomic_read(&FIT_ctx->num_alive_nodes);
 	}
@@ -203,7 +367,7 @@ int ibapi_num_connected_nodes(void)
 
 int ibapi_get_node_id(void)
 {
-	struct lego_context *ctx;
+	ppc *ctx;
 	if(FIT_ctx)
 	{
 		ctx = FIT_ctx;
@@ -212,38 +376,15 @@ int ibapi_get_node_id(void)
 	return 0;
 }
 
-int ibapi_establish_conn(int ib_port, int mynodeid)
-{
-	struct lego_context *ctx;
-	
-	//printk(KERN_CRIT "Start calling rc_internal to create FIT based on %p\n", ibapi_dev);
-
-	if (!ibapi_dev) {
-		printk(KERN_CRIT "ERROR: %s uninitilized ibapi_dev\n)", __func__);
-		return -1;
-	}
-
-	ctx = fit_establish_conn(ibapi_dev, ib_port, mynodeid);
-	
-	if(!ctx)
-	{
-		printk(KERN_ALERT "%s: ctx %p fail to init_interface \n", __func__, (void *)ctx);
-		return -1;
-	}
-
-	FIT_ctx = ctx;
-
-	printk(KERN_CRIT "FIT layer done with all initialization on node %d. Ready to go!\n", ctx->node_id);
-
-	return ctx->node_id;
-}
-
 static struct ib_client ibv_client = {
 	.name   = "ibv_server",
 	.add    = ibv_add_one,
 	.remove = ibv_remove_one
 };
 
+#define FIT_TESTING
+
+#if 1
 static void lego_ib_test(void)
 {
 	int ret, i;
@@ -253,30 +394,177 @@ static void lego_ib_test(void)
 
     printk(KERN_CRIT "lego_ib_test\n");
 	if (CONFIG_FIT_LOCAL_ID == 0) {
-		for (i = 0; i < 10; i++) {
+		for (i = 0; i < 1; i++) {
 			ret = ibapi_receive_message(0, buf, 4096, &desc);
 			pr_info("received message ret %d msg [%s]\n", ret, buf);
 			if (ret == SEND_REPLY_SIZE_TOO_BIG) {
 				printk(KERN_CRIT "received msg wrong size %d\n", ret);
 				return;
 			}
-			retb[0] = '1';
-			retb[1] = '2';
-			retb[2] = '\0';
+            printk(KERN_DEBUG "finish ibapi_receive_message\n");
+			retb[0] = 'h';
+			retb[1] = 'e';
+			retb[2] = 'y';
+			retb[3] = '\0';
 			ret = ibapi_reply_message(retb, 10, desc);
+            printk(KERN_DEBUG "finish ibapi_reply_message\n");
 		}
 	} else {
-		buf[0] = 'a';
-		buf[1] = 'b';
+		buf[0] = 'y';
+		buf[1] = 'o';
 		buf[2] = '\0';
-		for (i = 0; i < 10; i++) {
+		for (i = 0; i < 1; i++) {
 			ret = ibapi_send_reply_imm(0, buf, 4096, retb, 4096, 0);
 			pr_info("%s(%2d) retbuffer: %s\n", __func__, i, retb);
 		}
 	}
 }
+#else
+static void lego_ib_test(void)
+{
+#ifdef FIT_TESTING
+	int ret, i;
+	char *buf = kmalloc(4096, GFP_KERNEL);
+	char *buf2 = kmalloc(4096, GFP_KERNEL);
+	char *retb = kmalloc(4096, GFP_KERNEL);
+	char *retb2 = kmalloc(4096, GFP_KERNEL);
+	uintptr_t desc;
+	struct fit_sglist send_sglist[2], reply_sglist[2];
+	int nodes[2];
 
-static int my_test(void)
+	pr_info("testing multicast IB mynode %d\n", MY_NODE_ID);
+	if (MY_NODE_ID == 1) {
+		for (i = 0; i < 10; i++) {
+			ret = ibapi_receive_message(0, buf, 4096, &desc);
+			pr_info("received message: [%c%c%c%c]\n", buf[0], buf[1], buf[2], buf[3]);
+			retb[0] = '1';
+			retb[1] = '2';
+			retb[2] = '\0';
+			ret = ibapi_reply_message(retb, 4096, desc);
+		}
+	} else if (MY_NODE_ID == 2) {
+		for (i = 0; i < 10; i++) {
+			ret = ibapi_receive_message(0, buf, 4096, &desc);
+			pr_info("received message: [%c%c%c%c]\n", buf[0], buf[1], buf[2], buf[3]);
+			retb[0] = '6';
+			retb[1] = '7';
+			retb[2] = '\0';
+			ret = ibapi_reply_message(retb, 4096, desc);
+		}
+	} else {
+		buf[0] = 'a';
+		buf[1] = 'b';
+		buf[2] = '\0';
+		buf2[0] = 'x';
+		buf2[1] = 'y';
+		buf2[2] = '\0';
+		//struct page *p = alloc_page();
+		send_sglist[0].addr = buf;
+		send_sglist[0].len = 4096;
+		send_sglist[1].addr = buf2;
+		send_sglist[1].len = 4096;
+		reply_sglist[0].addr = retb;
+		reply_sglist[0].len = 4096;
+		reply_sglist[1].addr = retb2;
+		reply_sglist[1].len = 4096;
+		nodes[0] = 1;
+		nodes[1] = 2;
+
+		for (i = 0; i < 10; i++) {
+		ret = ibapi_multicast_send_reply_timeout(2, nodes, send_sglist, reply_sglist, 4096, 0, 360);
+			pr_info("%s(%2d) retbuf1: %s retbuf2: %s\n", __func__, i, retb, retb2);
+		}
+	}
+#endif
+}
+#endif
+
+static inline int parse_single_wc(uint64_t wr_id, enum ib_wc_status status)
+{
+	if (status != IB_WC_SUCCESS) {
+		printk(KERN_CRIT "Failed status %s (%d) for wr_id %d\n",
+			ib_wc_status_msg(status),
+			status, (int)wr_id);
+		return 1;
+	}
+
+    printk("wr_id %d ok\n", (int)wr_id);
+	return 0;
+}
+
+static int my_test_receive(void)
+{
+    // NOTE: Need to disable all other ib_post_recv
+    // (in fit_post_receives_message and fit_post_receives_message_with_buffer)
+
+    int i;
+    const size_t page_size = 4096;
+    const size_t size = 4096;
+    const int connection_id = 1;
+	char *buf = kmalloc(size, GFP_KERNEL);
+    if (!buf) {
+        printk(KERN_CRIT "alloc buf fails\n");
+        return 1;
+    }
+    memset(buf, 0, size);
+
+    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_FROM_DEVICE);
+    if (ib_dma_mapping_error(ibapi_dev, dma)) {
+        printk(KERN_CRIT "ib_dma_map_single fails\n");
+        return 1;
+    }
+	struct ib_sge list = {
+		.addr	= dma,
+		.length = size,
+		.lkey	= FIT_ctx->pd->local_dma_lkey,
+	};
+	struct ib_recv_wr wr = {
+		.wr_id	    = 2,
+		.sg_list    = &list,
+		.num_sge    = 1,
+	};
+	struct ib_recv_wr *bad_wr;
+
+    printk(KERN_DEBUG "calling ib_post_recv\n");
+	ib_post_recv(FIT_ctx->qp[connection_id], &wr, (const struct ib_recv_wr **)&bad_wr);
+
+	int ne, ret;
+	struct ib_wc wc;
+    int rcnt = 0;
+
+    while (rcnt < 1) {
+    	do {
+    		ne = ib_poll_cq(FIT_ctx->qp[connection_id]->recv_cq, 1, &wc);
+    		if (ne < 0) {
+    			printk(KERN_CRIT "poll CQ failed %d\n", ne);
+    			return 1;
+    		}
+    	} while (ne < 1);
+
+    	for (i = 0; i < ne; ++i) {
+    		ret = parse_single_wc(wc.wr_id, wc.status);
+    		if (ret) {
+    			printk(KERN_CRIT "parse WC failed %d\n", ne);
+    			return 1;
+            }
+            ++rcnt;
+        }
+    }
+
+    int valid = 1;
+	for (i = 0; i < size; i += sizeof(char)) {
+		if (buf[i] != (char)(i % 255)) {
+			printk("invalid data in buf[%d]=%d\n", i, buf[i]);
+            valid = 0;
+        }
+    }
+
+    printk(KERN_DEBUG "check result: valid=%d\n", valid);
+    printk(KERN_DEBUG "finish %s\n", __func__);
+    return 0;
+}
+
+static int my_test_send(void)
 {
     int i;
     const size_t page_size = 4096;
@@ -288,7 +576,7 @@ static int my_test(void)
         return 1;
     }
 	for (i = 0; i < size; i += sizeof(char))
-		buf[i] = i % 255;
+        buf[i] = i % 255;
 
     void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_TO_DEVICE);
     if (ib_dma_mapping_error(ibapi_dev, dma)) {
@@ -311,58 +599,43 @@ static int my_test(void)
 
     printk(KERN_DEBUG "calling ib_post_send\n");
 	return ib_post_send(FIT_ctx->qp[connection_id], &wr, (const struct ib_send_wr **)&bad_wr);
-
-#if 0
-    void* dma = ib_dma_map_single(ibapi_dev, buf, size, DMA_FROM_DEVICE);
-
-	struct ib_sge sg;
-    memset(&sg, 0, sizeof(sg));
-    sg.addr	= dma;
-	sg.length = size;
-	sg.lkey	= FIT_ctx->pd->local_dma_lkey;
-
-	struct ib_send_wr wr;
-    memset(&wr, 0, sizeof(wr));
-    wr.wr_id	  = 2;
-	wr.sg_list    = &sg;
-	wr.num_sge    = 1;
-	wr.opcode     = IB_WR_SEND;
-	wr.send_flags = IB_SEND_SIGNALED;
-
-    int myflag;
-    uint16_t pkey;
-    struct ib_qp_attr attr2;
-    struct ib_qp_init_attr init_attr;
-    struct rdma_ah_attr* ah;
-
-    myflag = IB_QP_STATE | IB_QP_CUR_STATE | IB_QP_EN_SQD_ASYNC_NOTIFY | IB_QP_ACCESS_FLAGS | IB_QP_PKEY_INDEX |
-             IB_QP_PORT | IB_QP_QKEY | IB_QP_AV | IB_QP_PATH_MTU | IB_QP_TIMEOUT |
-             IB_QP_RETRY_CNT | IB_QP_RNR_RETRY | IB_QP_RQ_PSN | IB_QP_MAX_QP_RD_ATOMIC |
-             IB_QP_ALT_PATH | IB_QP_MIN_RNR_TIMER | IB_QP_SQ_PSN | IB_QP_MAX_DEST_RD_ATOMIC |
-             IB_QP_MAX_DEST_RD_ATOMIC | IB_QP_CAP | IB_QP_DEST_QPN;
-    ib_query_qp(FIT_ctx->qp[connection_id], &attr2, myflag, &init_attr);
-    ib_query_pkey(ibapi_dev, attr2.port_num, attr2.pkey_index, &pkey);
-    ah = &attr2.ah_attr;
-                                                            
-    printk(KERN_CRIT "qpn=%d, dest_qp_num=%d, qp_state=%d, cur_state=%d, en_sqd_async_notify=%d, access_flags=%d, pkey_idx=%d, pkey=%d, port=%d, qkey=%d, mtu=%d, timeout=%d, retry_cnt=%d, rnr_retry=%d, rq_psn=%d, max_qp_rd_atomic=%d, min_rnr_timer=%d, sq_psn=%d, max_dest_rd_atomic=%d, path_mig_state=%d\n", FIT_ctx->qp[connection_id]->qp_num, attr2.dest_qp_num, attr2.qp_state, attr2.cur_qp_state, attr2.en_sqd_async_notify, attr2.qp_access_flags, attr2.pkey_index, pkey, attr2.port_num, attr2.qkey, attr2.path_mtu, attr2.timeout, attr2.retry_cnt, attr2.rnr_retry, attr2.rq_psn, attr2.max_rd_atomic, attr2.sq_psn, attr2.max_dest_rd_atomic, attr2.path_mig_state);
-    printk(KERN_CRIT "sl=%d, static_rate=%d, port_num=%d, ah_flags=%d, ah_type=%d, dlid=%d, src_path_bits=%d\n", ah->sl, ah->static_rate, ah->port_num, ah->ah_flags, ah->type, ah->ib.dlid, ah->ib.src_path_bits);
-    printk(KERN_CRIT "max_send_wr=%d, max_recv_wr=%d, max_send_sge=%d, max_recv_sge=%d, max_inline_data=%d, max_rdma_ctxs=%d, sq_sig_type=%d, qp_type=%d, create_flags=%d, port_num=%d, source_qpn=%d\n", init_attr.cap.max_send_wr, init_attr.cap.max_recv_wr, init_attr.cap.max_send_sge, init_attr.cap.max_recv_sge, init_attr.cap.max_inline_data, init_attr.cap.max_rdma_ctxs, init_attr.sq_sig_type, init_attr.qp_type, init_attr.create_flags, init_attr.port_num, init_attr.source_qpn);
-
-	return ib_post_send(FIT_ctx->qp[connection_id], &wr, NULL);
-#endif
 }
 
-int fit_state = FIT_MODULE_DOWN;
-EXPORT_SYMBOL(fit_state);
+static int my_test(void)
+{
+    if (CONFIG_FIT_LOCAL_ID == COMPUTE_21_ID) {
+        // As receiver
+        return my_test_receive();
+    }
 
-// static int __init lego_ib_init(void)
-static int lego_ib_init(void)
+    return my_test_send();
+}
+
+
+int lego_ib_init(void)
 {
 	int ret;
+	int nr_mad;
 
-	printk(KERN_CRIT "%s\n", __func__);
+	/* Pass statically assigned info */
+	atomic_set(&global_reqid, 0);
+	init_global_lid_qpn();
+	print_gloabl_lid();
 
-	fit_internal_init();
+    // TODO: enable?
+#if 0
+	/*
+	 * XXX
+	 * What's the reason to wait again? 7 is magic number here.
+	 *
+	 * The mad_got_one is upated by ib_mad_completion_handler.
+	 * It will be increased if we got a RECV message.
+	 */
+	nr_mad = 7;
+	pr_info("Please wait for enough IB MAD (number: %d) ...\n", nr_mad);
+	while (mad_got_one < nr_mad)
+		schedule();
+#endif
 
 	ret = ib_register_client(&ibv_client);
 	if (ret) {
@@ -370,31 +643,27 @@ static int lego_ib_init(void)
 		return ret;
 	}
 
-	atomic_set(&global_reqid, 0);
-
-	ret = ibapi_establish_conn(/* ib_port */1, CONFIG_FIT_LOCAL_ID);
-    if (ret < 0) {
-        printk(KERN_CRIT "ibapi_establish_conn return %d\n", ret); 
-        return -1;
+	/*
+	 * Use port 1
+	 */
+	FIT_ctx = fit_establish_conn(ibapi_dev, /* port */1, MY_NODE_ID);
+    if (!FIT_ctx) {
+		pr_err("couldn't establish fit connection\n");
+        return 1;
     }
+	pr_info("FIT layer ready to go!\n");
 
-//    lego_ib_test();
-    ret = my_test();
+	lego_ib_test();
+//    ret = my_test();
     printk(KERN_CRIT "my_test return %d\n");
-
-	fit_state = FIT_MODULE_UP;
 	return 0;
 }
 
-// static void __exit lego_ib_cleanup(void)
 static void lego_ib_cleanup(void)
 {
-	fit_state = FIT_MODULE_DOWN;
-
 	pr_info("Removing LegoOS FIT Module...");
 	fit_cleanup_module();
 	ib_unregister_client(&ibv_client);
-	fit_internal_cleanup();
 }
 
 module_init(lego_ib_init);

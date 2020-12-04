@@ -10,9 +10,17 @@
 #ifndef _INCLUDE_FIT_INTERNAL_H
 #define _INCLUDE_FIT_INTERNAL_H
 
+#undef pr_fmt
+#define pr_fmt(fmt) "fit: " fmt
+
 #include "fit.h"
 
-#define NUM_POLLING_THREADS 1
+/*
+ * Number of recv_cq
+ * Each recv_cq has its dedicated polling thread.
+ * Configured at compile time.
+ */
+#define NUM_POLLING_THREADS		(1)
 
 /* THREAD_HANDLER_MODEL - CHOOSE ONE*/
 #define WAITING_QUEUE_IMPLEMENTATION
@@ -33,42 +41,48 @@
 /* send poll thread model */
 //#define SEPARATE_SEND_POLL_THREAD
 
-#ifdef CONFIG_SOCKET_O_IB
-struct sock_recved_msg_metadata
-{       
-        uint32_t        source_node_id;
-	uint32_t	offset;
-	uint32_t	size;
-	uint32_t	port;
-	struct list_head list;
-};
-#endif
-
 inline void fit_free_recv_buf(void *input_buf);
 
-struct lego_context *fit_establish_conn(struct ib_device *ib_dev, int ib_port, int mynodeid);
+ppc *fit_establish_conn(struct ib_device *ib_dev, int ib_port, int mynodeid);
 int fit_cleanup_module(void);
 
 //The below functions in ibapi are required to modify based on these four
-//int fit_query_port(struct lego_context *ctx, int target_node, int desigend_port, int requery_flag);
-int fit_send_reply_with_rdma_write_with_imm(struct lego_context *ctx, int target_node, void *addr, int size, void *ret_addr, int max_ret_size, int userspace_flag, int if_use_ret_phys_addr);
-int fit_reply_message(struct lego_context *ctx, void *addr, int size, uintptr_t descriptor, int userspace_flag);
-int fit_receive_message(struct lego_context *ctx, unsigned int port, void *ret_addr, int receive_size, uintptr_t *reply_descriptor, int userspace_flag);
+//int fit_query_port(ppc *ctx, int target_node, int desigend_port, int requery_flag);
+
+struct fit_sglist;
+
+int fit_send_reply_with_rdma_write_with_imm(ppc *ctx, int target_node, void *addr,
+				int size, void *ret_addr, int max_ret_size, int userspace_flag,
+				int if_use_ret_phys_addr, unsigned long timeout_sec, void *caller);
+int fit_send_reply_with_rdma_write_with_imm_reply_extra_bits(ppc *ctx, int target_node, void *addr,
+					       int size, void *ret_addr, int max_ret_size, int *ret_private_bits,
+					       int userspace_flag, int if_use_ret_phys_addr,
+					       unsigned long timeout_sec, void *caller);
+int fit_multicast_send_reply(ppc *ctx, int num_nodes, int *target_node,
+						struct fit_sglist *sglist, struct fit_sglist *output_msg,
+						int max_ret_size, int userspace_flag, int if_use_ret_phys_addr,
+						unsigned long timeout_sec, void *caller);
+
+int fit_send_with_rdma_write_with_imm(ppc *ctx, int target_node, void *addr,
+					       int size, int userspace_flag);
+int fit_receive_message_no_reply(ppc *ctx, unsigned int port, void *ret_addr, int receive_size, int userspace_flag);
+
+int fit_reply_message(ppc *ctx, void *addr, int size, uintptr_t descriptor, int userspace_flag, int if_poll_now);
+int fit_reply_message_w_extra_bits(ppc *ctx, void *addr, int size, int private_bits, uintptr_t descriptor, int userspace_flag, int if_poll_now);
+int fit_receive_message(ppc *ctx, unsigned int port, void *ret_addr, int receive_size, uintptr_t *reply_descriptor, int userspace_flag);
 
 int fit_internal_init(void);
-int fit_internal_cleanup(void);
 
 /* fit_machine.c */
 void init_global_lid_qpn(void);
 void print_gloabl_lid(void);
+
 unsigned int get_node_global_lid(unsigned int nid);
 unsigned int get_node_first_qpn(unsigned int nid);
-bool check_current_first_qpn(struct lego_context* ctx,
-                             unsigned int num_connections);
 
 extern unsigned int global_lid[];
 extern unsigned int first_qpn[];
 
-int sock_send_message(struct lego_context *ctx, int targe_node, int port, int if_internal_port, void *buf, int size, unsigned long timeout_sec, int if_userspace);
-int sock_receive_message(struct lego_context *ctx, int *target_node, int port, void *ret_addr, int receive_size, int if_userspace, int sock_type);
-#endif
+int sock_send_message(ppc *ctx, int targe_node, int port, int if_internal_port, void *buf, int size, unsigned long timeout_sec, int if_userspace);
+int sock_receive_message(ppc *ctx, int *target_node, int port, void *ret_addr, int receive_size, int if_userspace, int sock_type);
+#endif /* _INCLUDE_FIT_INTERNAL_H */

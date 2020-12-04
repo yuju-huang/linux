@@ -3,6 +3,7 @@ obj-m := fit.o
 fit-y := fit_ibapi.o
 fit-y += fit_internal.o
 fit-y += fit_machine.o
+fit-y += pin.o
 
 cflags += -g
 EXTRA_CFLAGS += -g

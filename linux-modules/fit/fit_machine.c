@@ -23,54 +23,27 @@
 #include <linux/kernel.h>
 #include <rdma/ib_verbs.h>
 
-#include "../../include/uapi/lego/fit.h"
-
+#include "fit_config.h"
 #include "fit_internal.h"
+
+/* Built based on node id */
+struct fit_machine_info *lego_cluster[CONFIG_FIT_NR_NODES];
 
 /*
  * NOTE:
  * This array specifies hostname of machines you want to use in Lego cluster.
  * Hostnames are listed by the order of FIT node ID. Any wrong configuration
- * lead to an early panic.
+ * lead to an early panic. Using hostname is more convenient that just using
+ * raw numbers.
  */
 static const char *lego_cluster_hostnames[CONFIG_FIT_NR_NODES] = {
 	[0]	=	"compute21",
 	[1]	=	"compute22",
 };
 
-/* Built based on node id */
-struct fit_machine_info *lego_cluster[CONFIG_FIT_NR_NODES];
-
 static struct fit_machine_info WUKLAB_CLUSTER[] = {
-[0]	= {	.hostname =	"compute21", .lid = 18, },
-[1]	= {	.hostname =	"compute22", .lid = 19, },
-/*
-[1]	= {	.hostname =	"wuklab01",	.lid =	6,	},
-[2]	= {	.hostname =	"wuklab02",	.lid =	8,	},
-[3]	= {	.hostname =	"wuklab03",	.lid =	9,	},
-[4]	= {	.hostname =	"wuklab04",	.lid =	7,	},
-[5]	= {	.hostname =	"wuklab05",	.lid =	3,	},
-[6]	= {	.hostname =	"wuklab06",	.lid =	5,	},
-[7]	= {	.hostname =	"wuklab07",	.lid =	4,	},
-[8]	= {	.hostname =	"wuklab08",	.lid =	10,	},
-[9]	= {	.hostname =	"wuklab09",	.lid =	12,	},
-[10]	= {	.hostname =	"wuklab10",	.lid =	14,	},
-[11]	= {	.hostname =	"wuklab11",	.lid =	11,	},
-[12]	= {	.hostname =	"wuklab12",	.lid =	26,	},
-[13]	= {	.hostname =	"wuklab13",	.lid =	15,	},
-[14]	= {	.hostname =	"wuklab14",	.lid =	16,	},
-[15]	= {	.hostname =	"wuklab15",	.lid =	17,	},
-[16]	= {	.hostname =	"wuklab16",	.lid =	20,	},
-[17]	= {	.hostname =	"wuklab17",	.lid =	21,	},
-[18]	= {	.hostname =	"wuklab18",	.lid =	19,	},
-[19]	= {	.hostname =	"wuklab19",	.lid =	18,	},
-[20]	= {	.hostname =	"wuklab20",	.lid =	27,	},
-[21]	= {	.hostname =	"wuklab21",	.lid =	28,	},
-[22]	= {	.hostname =	"wuklab22",	.lid =	29,	},
-[23]	= {	.hostname =	"wuklab23",	.lid =	30,	},
-[24]	= {	.hostname =	"wuklab24",	.lid =	31,	},
-[25]	= {	.hostname =	"wuklab25",	.lid =	26,	},
-*/
+    [0]	= {	.hostname =	"compute21", .lid = 18, },
+    [1]	= {	.hostname =	"compute22", .lid = 19, },
 };
 
 /* Indicate machines that are used by lego */
@@ -92,41 +65,7 @@ unsigned int get_node_first_qpn(unsigned int nid)
 }
 
 /*
- * This come after arrays are initialized
- * We check if this runtime's QPN matches our wuklab_cluster table
- */
-bool check_current_first_qpn(struct lego_context* ctx,
-                             unsigned int num_connections)
-{
-    unsigned int i;
-	unsigned int self;
-    unsigned int expected;
-
-    for (i = 0; i < num_connections; ++i) {
-        if (ctx->qp[i] != NULL) break;
-    }
-
-    expected = i + get_node_first_qpn(CONFIG_FIT_LOCAL_ID);
-    if (ctx->qp[i] == NULL) {
-        pr_err("check_current_first_qpn i=%d, expected=%d\n", i, expected);
-        return false;
-    }
-
-    if (ctx->qp[i]->qp_num == expected)
-        return true;
-
-	pr_err("******\n");
-	pr_err("******\n");
-	pr_err("******  ERROR: QPN Changed!\n");
-	pr_err("******  Other Lego machines will fail to connect.\n");
-	pr_err("******  (Create qpn: %d expected; %d)\n", ctx->qp[i]->qp_num, expected);
-	pr_err("******\n");
-	pr_err("******\n");
-    return false;
-}
-
-/*
- * Fill the lego_cluster and global_lid array based on nid.
+ * Fill the lego_cluster, global_lid, first_qpn array.
  * Return 0 on success, return 1 if duplicates
  */
 static int assign_fit_machine(unsigned int nid, struct fit_machine_info *machine)
@@ -167,7 +106,14 @@ void init_global_lid_qpn(void)
 	int nid;
 	bool bug = false;
 
+    // TODO: enable
+#if 0
+#if defined(CONFIG_FIT_LOCAL_ID) && defined(CONFIG_FIT_NR_NODES)
 	BUILD_BUG_ON(CONFIG_FIT_LOCAL_ID >= CONFIG_FIT_NR_NODES);
+#else
+	BUILD_BUG_ON(1);
+#endif
+#endif
 
 	/*
 	 * Build the machine list based on user provided
@@ -197,24 +143,26 @@ void init_global_lid_qpn(void)
 			bug = true;
 		}
 	}
-
 	if (bug) {
+		// panic("Please check your network config!");
 		pr_err("Please check your network config!");
 		WARN_ON(1);
-	}
-
-	/* FIT module can get the first_qpn from linux */
+    }
 }
 
 void print_gloabl_lid(void)
 {
 	int nid;
 
+	pr_info("***\n");
+	pr_info("***  FIT_initial_timeout_s:   %d\n", CONFIG_FIT_INITIAL_SLEEP_TIMEOUT);
 	pr_info("***  FIT_LOCAL_ID:            %d\n", CONFIG_FIT_LOCAL_ID);
 	pr_info("***  FIT_FIRST_QPN:           %d\n", CONFIG_FIT_FIRST_QPN);
 	pr_info("***  FIT_NR_QPS_PER_PAIR:     %d\n", CONFIG_FIT_NR_QPS_PER_PAIR);
+	pr_info("***  FIT_MAX_SEND_WR:         %d\n", CONFIG_FIT_MAX_OUTSTANDING_SEND);
 	pr_info("***\n");
 	pr_info("***    NodeID    Hostname    LID    QPN\n");
+	pr_info("***    -------------------------------------\n");
 	for (nid = 0; nid < CONFIG_FIT_NR_NODES; nid++) {
 		pr_info("***    %6d    %s    %3d    %3d",
 			nid, lego_cluster[nid]->hostname,
@@ -222,9 +170,9 @@ void print_gloabl_lid(void)
 			get_node_first_qpn(nid));
 
 		if (nid == CONFIG_FIT_LOCAL_ID)
-			pr_cont(" <---\n");
+			printk(KERN_CONT " <---\n");
 		else
-			pr_cont("\n");
+			printk(KERN_CONT "\n");
 	}
 	pr_info("***\n");
 }
