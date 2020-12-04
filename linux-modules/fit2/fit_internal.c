@@ -41,7 +41,7 @@ static inline void fit_debug(const char *fmt, ...) { }
 #endif
 
 #define fit_err(fmt, ...)						\
-	pr_debug("%s()-%d CPU%2d " fmt "\n",				\
+	fit_debug("%s()-%d CPU%2d " fmt "\n",				\
 		__func__, __LINE__, smp_processor_id(), __VA_ARGS__)
 
 // TODO: Move to other place? ---------
@@ -51,6 +51,10 @@ static inline void fit_debug(const char *fmt, ...) { }
  */
 unsigned int nr_cpus = 32;
 MODULE_LICENSE("GPL");
+
+// TODO: for debug, remove
+int fit_end = 0;
+int received_msg = 0;
 
 static inline dma_addr_t phys_to_dma(struct device *dev, phys_addr_t paddr)
 {
@@ -185,7 +189,8 @@ static inline void *get_reply_ready_ptr(ppc *ctx, unsigned int index)
 
 	if (unlikely(!virt_addr_valid((unsigned long)ptr))) {
 		fit_err("index: %d ptr: %p", index, ptr);
-		BUG();
+        fit_err("PAGE_OFFSET=%p\n", (void*)PAGE_OFFSET);
+		// BUG();
 	}
 	return ptr;
 }
@@ -1411,10 +1416,18 @@ int fit_receive_message(ppc *ctx, unsigned int port, void *ret_addr, int receive
 	int last_ack;
 	int ack_flag=0;
 
+    unsigned long timeout = FIT_MAX_TIMEOUT_SEC;
+	unsigned long start_time = jiffies;
+
 	/*
 	 * Busy polling incoming message
 	 */
 	while(1) {
+        // TODO: remove
+        if (unlikely(time_after(jiffies, start_time + timeout * HZ))) {
+            fit_debug("fit_receive_message timeout %d\n", jiffies);
+            return -ETIMEDOUT;
+        }
 		spin_lock(&ctx->imm_waitqueue_perport_lock[port]);
 		if (likely(!list_empty(&(ctx->imm_waitqueue_perport[port].list)))) {
 			new_request = list_entry(ctx->imm_waitqueue_perport[port].list.next,
@@ -1436,6 +1449,9 @@ int fit_receive_message(ppc *ctx, unsigned int port, void *ret_addr, int receive
 	//get buffer from hash table based on node and port
 
 	tmp = (struct imm_message_metadata *)(ctx->local_rdma_recv_rings[node_id] + offset);
+    fit_debug("node_id=%d, tmp=%px, offset=%d, sizeof(imm_message_metadata)=%d\n", node_id, (void*)tmp, offset, sizeof(struct imm_message_metadata));
+    fit_debug("imm_message_metadata: size=%d, reply_addr=%px, reply_rkey=%x\n", tmp->size, (void*)tmp->reply_addr, tmp->reply_rkey);
+
 	get_size = tmp->size;
 	//Check size
 	if(get_size > receive_size)
@@ -1449,7 +1465,10 @@ int fit_receive_message(ppc *ctx, unsigned int port, void *ret_addr, int receive
 
 	//Generate descriptor for future reply message
 	descriptor = (struct imm_message_metadata *)kmalloc(sizeof(struct imm_message_metadata), GFP_KERNEL); //kmem_cache_alloc(imm_message_metadata_cache, GFP_KERNEL);
-	BUG_ON(!descriptor);
+    if (!descriptor) {
+        printk(KERN_CRIT "allocate descriptor fail\n");
+        return 1;
+    }
 	/*
 	while(!descriptor)
 	{
@@ -1888,14 +1907,16 @@ static int fit_poll_recv_cq(void *_info)
 	recvcq_id = info->recvcq_id;
 
 	wc = kmalloc(sizeof(*wc) * NUM_PARALLEL_CONNECTION, GFP_KERNEL);
-	BUG_ON(!wc);
-
-	if (pin_current_thread()) {
-		pr_err("Fail to pin poll_cq");
-		// panic("Fail to pin poll_cq");
+    if (!wc) {
+        fit_err("alloc wc fail %p\n", wc);
+        return 0;
     }
 
-	while(1) {
+	if (pin_current_thread()) {
+		fit_err("Fail to pin poll_cq %s", __func__);
+    }
+
+	while(!fit_end) {
 		/* We keep polling this CQ */
 		do {
 			ne = ib_poll_cq(target_cq, NUM_PARALLEL_CONNECTION, wc);
@@ -1903,11 +1924,12 @@ static int fit_poll_recv_cq(void *_info)
 				fit_err("poll_cq error: %d", ne);
 				return ne;
 			}
-		} while (ne < 1);
+		} while ((ne < 1) && (!fit_end));
 
 		/* Update stats */
 		nr_recvcq_cqes[recvcq_id] += ne;
 
+        if (++received_msg > 2) return 0;
 		for (i = 0; i < ne; i++) {
 			if (unlikely(wc[i].status != IB_WC_SUCCESS)) {
 				fit_err("wc.status: %s, wr_id %d",
@@ -1916,6 +1938,7 @@ static int fit_poll_recv_cq(void *_info)
 			}
 
 			/* IB_WC_RECV is only used at connection time */
+            fit_debug("opcode=%d\n", wc[i].opcode);
 			if (wc[i].opcode == IB_WC_RECV) {
 				struct ibapi_post_receive_intermediate_struct *p_r_i_struct = (void *)wc[i].wr_id;
 				struct ibapi_header temp_header;
@@ -1928,7 +1951,6 @@ static int fit_poll_recv_cq(void *_info)
 				addr = phys_to_virt(p_r_i_struct->msg);
 				type = temp_header.type;
 
-                printk(KERN_DEBUG "type=%d\n", type);
 				if (type == MSG_SEND_RDMA_RING_MR) {
 					memcpy(&ctx->remote_rdma_ring_mrs[temp_header.src_id],
 					       addr, sizeof(struct fit_ibv_mr));
@@ -1938,11 +1960,11 @@ static int fit_poll_recv_cq(void *_info)
 #endif
 
 					nr_joined_nodes++;
-					fit_debug(" ... Node [%2d] Joined. addr %p rkey %d nr_joined_nodes %d\n",
+					fit_debug(" ... Node [%2d] Joined. addr %px length %d rkey %x nr_joined_nodes %d\n",
 						temp_header.src_id, ctx->remote_rdma_ring_mrs[temp_header.src_id].addr,
+                        ctx->remote_rdma_ring_mrs[temp_header.src_id].length,
 						ctx->remote_rdma_ring_mrs[temp_header.src_id].rkey, nr_joined_nodes);
 				}
-                return 0;
 			} else if (wc[i].opcode == IB_WC_RECV_RDMA_WITH_IMM) {
 				/* IB_WC_WITH_IMM is the ONLY valid flag */
 				if (wc[i].wc_flags != IB_WC_WITH_IMM) {
@@ -1953,6 +1975,7 @@ static int fit_poll_recv_cq(void *_info)
 
 				/* Following code assume wc_flags = IB_WC_WITH_IMM */
 				node_id = GET_NODE_ID_FROM_POST_RECEIVE_ID(wc[i].wr_id);
+                fit_debug("node_id=%d, imm=%x\n", node_id, wc[i].ex.imm_data);
 				if (wc[i].ex.imm_data & IMM_SEND_REPLY_SEND) {
 					/*
 					 * This means there is an incoming request:
@@ -2224,7 +2247,7 @@ static int waiting_queue_handler(void *_ctx)
 	ppc *ctx = _ctx;
 
 	pin_current_thread();
-	while (1) {
+	while (!fit_end) {
 		while (!atomic_read(&nr_wq_jobs))
 			cpu_relax();
 
@@ -2365,7 +2388,10 @@ int fit_send_with_rdma_write_with_imm(ppc *ctx, int target_node, void *addr,
 	int last_ack;
 	int ret;
 
-	BUG_ON(!addr);
+    if (!addr) {
+        fit_err("null addr %p\n", addr);
+        return 1;
+    }
 
 	real_size = size + sizeof(struct imm_message_metadata);
 	if (unlikely(real_size > IMM_MAX_SIZE)) {
@@ -2408,7 +2434,7 @@ int fit_send_with_rdma_write_with_imm(ppc *ctx, int target_node, void *addr,
 	remote_addr = remote_mr->addr;
 	remote_rkey = remote_mr->rkey;
 
-	fit_debug("send imm-%x addr-%x rkey-%x oaddr-%x orkey-%x\n",
+	fit_debug("send imm-%x addr-%px rkey-%x oaddr-%px orkey-%x\n",
 		imm_data, remote_addr, remote_rkey, msg_header.reply_addr, msg_header.reply_rkey);
 
 	/* for send reply, no need to poll the send now, since we have reply already */
@@ -2499,8 +2525,8 @@ int fit_send_reply_with_rdma_write_with_imm(ppc *ctx, int target_node, void *add
 	remote_addr = remote_mr->addr;
 	remote_rkey = remote_mr->rkey;
 
-	fit_debug("send imm-%x addr-%x rkey-%x oaddr-%x orkey-%x\n",
-		imm_data, remote_addr, remote_rkey, msg_header.reply_addr, msg_header.reply_rkey);
+	fit_debug("send imm-%x addr-%px rkey-%x msg_size=%d reply_addr-%px reply_rkey-%x\n",
+		imm_data, remote_addr, remote_rkey, msg_header.size, msg_header.reply_addr, msg_header.reply_rkey);
 
 	/* for send reply, no need to poll the send now, since we have reply already */
 	fit_send_message_with_rdma_write_with_imm_request(ctx, connection_id, remote_rkey,
@@ -2533,7 +2559,7 @@ int fit_send_reply_with_rdma_write_with_imm(ppc *ctx, int target_node, void *add
 	while (local_reply_ready_checker == SEND_REPLY_WAIT) {
 		cpu_relax();
 		if (unlikely(time_after(jiffies, start_time + timeout_sec * HZ))) {
-			pr_warn("ibapi_send_reply() CPU:%d PID:%d timeout (%u ms), caller: %pS\n",
+			fit_debug("ibapi_send_reply() CPU:%d PID:%d timeout (%u ms), caller: %pS\n",
 				smp_processor_id(), current->pid,
 				jiffies_to_msecs(jiffies - start_time), caller);
 // TODO: enable?
@@ -2804,8 +2830,8 @@ int fit_multicast_send_reply(ppc *ctx, int num_nodes, int *target_node,
 		remote_addr = remote_mr->addr;
 		remote_rkey = remote_mr->rkey;
 
-		fit_debug("send imm-%x addr-%lx rkey-%x addr-%lx rkey-%x\n",
-				imm_data, (unsigned long)remote_addr, remote_rkey, (unsigned long)msg_header[i].reply_addr, msg_header[i].reply_rkey);
+		fit_debug("send imm-%x addr-%p rkey-%x reply_addr-%p reply_rkey-%x\n",
+				imm_data, remote_addr, remote_rkey, (unsigned long)msg_header[i].reply_addr, msg_header[i].reply_rkey);
 		/* for send reply, no need to poll the send now, since we have reply already */
 		fit_send_message_with_rdma_write_with_imm_request(ctx, connection_id, remote_rkey,
 				(uintptr_t)remote_addr, sglist[i].addr, sglist[i].len, tar_offset_start, imm_data,
@@ -2956,6 +2982,7 @@ static int send_rdma_ring_mr_to_other_nodes(ppc *ctx)
 	for (i = 0; i < ctx->num_node; i++) {
 		if (ctx->node_id == i)
 			continue;
+
 		memcpy(msg, &ctx->local_rdma_ring_mrs[i], sizeof(struct fit_ibv_mr));
 #ifdef CONFIG_SOCKET_O_IB
 		connection_id = (NUM_PARALLEL_CONNECTION + 1) * i;
@@ -2968,9 +2995,9 @@ static int send_rdma_ring_mr_to_other_nodes(ppc *ctx)
 				ctx->local_sock_rdma_ring_mrs[i], connection_id, i);
 #else
 		connection_id = NUM_PARALLEL_CONNECTION * i;
-
-		fit_debug("send ringmr addr %p lkey %lx rkey %lx conn %d node %d\n",
+		fit_debug("send ringmr i %d addr %px length %d lkey %lx rkey %lx conn %d node %d\n", i,
 				ctx->local_rdma_ring_mrs[i].addr,
+				ctx->local_rdma_ring_mrs[i].length,
 				ctx->local_rdma_ring_mrs[i].lkey,
 				ctx->local_rdma_ring_mrs[i].rkey,
 				connection_id, i);
@@ -2992,6 +3019,8 @@ ppc *fit_establish_conn(struct ib_device *ib_dev, int ib_port, int mynodeid)
 	int	size = 8192;
 	int	rx_depth = RECV_DEPTH;
 	int	ret;
+	unsigned long start_time;
+    unsigned long timeout_sec = FIT_MAX_TIMEOUT_SEC;
 
 	mtu = IB_MTU_2048;
 	sl = 0;
@@ -3165,13 +3194,20 @@ retry:
 
 	pr_debug("Please wait other nodes to join ...\n");
 
-	while (nr_joined_nodes < ctx->num_node - 1)
+    start_time = jiffies;
+	while (nr_joined_nodes < ctx->num_node - 1) {
 		schedule();
+        if (unlikely(time_after(jiffies, start_time + timeout_sec * HZ))) {
+            fit_err("timeout in waiting other nodes to join %d\n", timeout_sec);
+            return NULL;
+        }
+    }
 	return ctx;
 }
 
 int fit_cleanup_module(void)
 {
 	printk(KERN_INFO "Ready to remove module\n");
+    fit_end = 1;
 	return 0;
 }

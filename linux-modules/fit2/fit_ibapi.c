@@ -394,23 +394,26 @@ static void lego_ib_test(void)
 
     printk(KERN_CRIT "lego_ib_test\n");
 	if (CONFIG_FIT_LOCAL_ID == 0) {
-		for (i = 0; i < 10; i++) {
+		for (i = 0; i < 1; i++) {
 			ret = ibapi_receive_message(0, buf, 4096, &desc);
 			pr_info("received message ret %d msg [%s]\n", ret, buf);
 			if (ret == SEND_REPLY_SIZE_TOO_BIG) {
 				printk(KERN_CRIT "received msg wrong size %d\n", ret);
 				return;
 			}
-			retb[0] = '1';
-			retb[1] = '2';
-			retb[2] = '\0';
+            printk(KERN_DEBUG "finish ibapi_receive_message\n");
+			retb[0] = 'h';
+			retb[1] = 'e';
+			retb[2] = 'y';
+			retb[3] = '\0';
 			ret = ibapi_reply_message(retb, 10, desc);
+            printk(KERN_DEBUG "finish ibapi_reply_message\n");
 		}
 	} else {
-		buf[0] = 'a';
-		buf[1] = 'b';
+		buf[0] = 'y';
+		buf[1] = 'o';
 		buf[2] = '\0';
-		for (i = 0; i < 10; i++) {
+		for (i = 0; i < 1; i++) {
 			ret = ibapi_send_reply_imm(0, buf, 4096, retb, 4096, 0);
 			pr_info("%s(%2d) retbuffer: %s\n", __func__, i, retb);
 		}
@@ -650,7 +653,7 @@ int lego_ib_init(void)
     }
 	pr_info("FIT layer ready to go!\n");
 
-//	lego_ib_test();
+	lego_ib_test();
 //    ret = my_test();
     printk(KERN_CRIT "my_test return %d\n");
 	return 0;

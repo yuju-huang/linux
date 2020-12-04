@@ -56,7 +56,7 @@ struct fit_machine_info {
 /*
  * Maximum timeout for a ibapi_send_reply_timeout call
  */
-#define CONFIG_FIT_MAX_RPC_TIMEOUT_SEC 60
+#define CONFIG_FIT_MAX_RPC_TIMEOUT_SEC 20
 #define FIT_MAX_TIMEOUT_SEC	CONFIG_FIT_MAX_RPC_TIMEOUT_SEC
 
 /*
